@@ -167,6 +167,7 @@ public class Greg {
             Socket client = null;
             try {
                 client = new Socket(conf.server, conf.calibrationPort);
+                client.setTcpNoDelay(true);
                 exchangeTicksOver(client.getInputStream(), client.getOutputStream());
             } catch (Exception e) {
                 Trace.writeLine("Failed to exchange clock ticks during calibration, ignoring" + e);
