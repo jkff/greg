@@ -4,6 +4,7 @@
     <modules>
       <module fileurl="file://$PROJECT_DIR$/client/java/greg-client.iml" filepath="$PROJECT_DIR$/client/java/greg-client.iml" />
       <module fileurl="file://$PROJECT_DIR$/greg-server/greg-server.iml" filepath="$PROJECT_DIR$/greg-server/greg-server.iml" />
+      <module fileurl="file://$PROJECT_DIR$/client/java-log4j-appender/java-log4j-appender.iml" filepath="$PROJECT_DIR$/client/java-log4j-appender/java-log4j-appender.iml" />
     </modules>
   </component>
 </project>
