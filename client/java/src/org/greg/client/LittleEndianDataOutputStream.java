@@ -5,7 +5,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.io.UTFDataFormatException;
 
-public class LittleEndianDataOutputStream implements DataOutput {
+class LittleEndianDataOutputStream implements DataOutput {
     private final OutputStream out;
 
     public LittleEndianDataOutputStream(OutputStream out) {

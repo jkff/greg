@@ -46,6 +46,10 @@ public class GregServer {
         conf.maxPendingUncalibrated = get(args, "maxPendingUncalibrated", 100000);
         conf.timeWindowSec = get(args, "timeWindowSec", 5);
 
+        if(Boolean.parseBoolean(get(args, "verbose", "false"))) {
+            Trace.ENABLED = true;
+        }
+
         final GregServer server = new GregServer(conf);
 
         new Thread() {
@@ -85,8 +89,6 @@ public class GregServer {
                             writer.write(rec.clientId);
                             writer.write(' ');
                             writer.write(rec.timestamp.toString());
-                            writer.write(' ');
-                            writer.write(rec.serverTimestamp.toString());
                             writer.write(' ');
                             writer.write(rec.message);
                             writer.write(newline);

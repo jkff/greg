@@ -1,5 +1,5 @@
 package org.greg.client;
 
-public interface Clock {
+interface Clock {
     PreciseDateTime now();
 }

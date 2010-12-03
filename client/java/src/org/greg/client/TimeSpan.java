@@ -1,6 +1,6 @@
 package org.greg.client;
 
-public class TimeSpan {
+class TimeSpan {
     private long nanos;
 
     public TimeSpan(long nanos) {

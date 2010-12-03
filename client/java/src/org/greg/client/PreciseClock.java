@@ -1,6 +1,6 @@
 package org.greg.client;
 
-public class PreciseClock implements Clock {
+class PreciseClock implements Clock {
     private static final long utcOrigin = System.currentTimeMillis();
     private static long originNano = System.nanoTime();
 

@@ -2,7 +2,7 @@ package org.greg.client;
 
 import java.io.*;
 
-public class LittleEndianDataInputStream implements DataInput {
+class LittleEndianDataInputStream implements DataInput {
     private InputStream in;
 
     public LittleEndianDataInputStream(InputStream in) {

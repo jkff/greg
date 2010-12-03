@@ -11,11 +11,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPOutputStream;
 
 public class Greg {
-    // The records don't have to be ordered. The server will order them by global time anyway.
-    // So let's use one of the fastest kinds of a concurrent collection - actually a singly-linked immutable list
-    // (a concurrent stack)
     private static final Queue<Record> records = new ConcurrentLinkedQueue<Record>();
     private static final AtomicInteger numDropped = new AtomicInteger(0);
+    // Don't use ConcurrentLinkedQueue.size() because it's O(n)
     private static final AtomicInteger numRecords = new AtomicInteger(0);
     private static final Configuration conf = Configuration.INSTANCE;
 
@@ -23,16 +21,19 @@ public class Greg {
     private static final String hostname;
 
     static {
-        new Thread() {
+        new Thread("GregPushMessages") {
             public void run() {
+                Thread.currentThread().setDaemon(true);
                 pushCurrentMessages();
             }
         }.start();
-        new Thread() {
+        new Thread("GregInitiateCalibration") {
             public void run() {
+                Thread.currentThread().setDaemon(true);
                 initiateCalibration();
             }
         }.start();
+
         try {
             hostname = InetAddress.getLocalHost().getHostName();
         } catch (UnknownHostException e) {
@@ -45,7 +46,6 @@ public class Greg {
             numRecords.incrementAndGet();
 
             Record r = new Record();
-            r.machine = hostname;
             r.message = message;
             r.timestamp = PreciseClock.INSTANCE.now();
             int prevNumDropped = numDropped.getAndSet(0);
@@ -67,7 +67,7 @@ public class Greg {
         while (true) {
             while (records.isEmpty()) {
                 try {
-                    Thread.sleep(conf.recordsPollPeriodMs);
+                    Thread.sleep(100);
                 } catch (InterruptedException e) {
                     continue;
                 }
@@ -98,13 +98,7 @@ public class Greg {
             } finally {
                 close(stream);
                 close(bStream);
-                if (client != null) {
-                    try {
-                        client.close();
-                    } catch (IOException e) {
-                        // Ignore
-                    }
-                }
+                close(client);
             }
 
             // Only sleep when waiting for new records.
@@ -128,6 +122,16 @@ public class Greg {
         }
     }
 
+    private static void close(Socket sock) {
+        if (sock != null) {
+            try {
+                sock.close();
+            } catch (IOException e) {
+                // Ignore
+            }
+        }
+    }
+
     private static boolean writeRecordsBatchTo(OutputStream stream) throws IOException {
         int maxBatchSize = 10000;
         DataOutput w = new LittleEndianDataOutputStream(stream);
@@ -142,7 +146,7 @@ public class Greg {
                 break;
             w.writeInt(1);
             w.writeLong(rec.timestamp.toUtcNanos());
-            byte[] machineBytes = rec.machine.getBytes("utf-8");
+            byte[] machineBytes = hostname.getBytes("utf-8");
             w.writeInt(machineBytes.length);
             w.write(machineBytes);
             byte[] bytes = rec.message.getBytes("utf-8");
@@ -167,13 +171,7 @@ public class Greg {
             } catch (Exception e) {
                 Trace.writeLine("Failed to exchange clock ticks during calibration, ignoring" + e);
             } finally {
-                if (client != null) {
-                    try {
-                        client.close();
-                    } catch (IOException e) {
-                        // Ignore
-                    }
-                }
+                close(client);
             }
             try {
                 Thread.sleep(conf.calibrationPeriodSec * 1000L);

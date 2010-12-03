@@ -1,6 +1,6 @@
-package org.greg.client;
+package org.greg.server;
 
-class Trace {
+public class Trace {
     public static boolean ENABLED = Boolean.parseBoolean(System.getProperty("greg.trace.enabled", "false"));
 
     public static void writeLine(String s) {

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="greg-server" default="all">
+    <import file="build-common.xml"/>
+
+    <target name="all" depends="common.clean,common.make-bindist,common.make-srcdist"/>
+</project>

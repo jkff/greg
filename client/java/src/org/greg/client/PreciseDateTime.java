@@ -2,7 +2,7 @@ package org.greg.client;
 
 import java.util.Calendar;
 
-public class PreciseDateTime implements Comparable<PreciseDateTime> {
+class PreciseDateTime implements Comparable<PreciseDateTime> {
     private final long utcNanos;
 
     public PreciseDateTime(long utcNanos) {

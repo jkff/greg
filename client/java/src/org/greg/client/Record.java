@@ -1,9 +1,6 @@
 package org.greg.client;
 
-public class Record {
-    public String machine;
-    public PreciseDateTime serverTimestamp;
+class Record {
     public PreciseDateTime timestamp;
     public String message;
-    public String clientId;
 }
