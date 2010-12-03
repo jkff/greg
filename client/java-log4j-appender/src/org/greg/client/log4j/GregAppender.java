@@ -9,7 +9,7 @@ public class GregAppender extends AppenderSkeleton {
     @Override
     protected void append(LoggingEvent loggingEvent) {
         Layout layout = getLayout();
-        Greg.log(layout == null ? loggingEvent.getRenderedMessage() : getLayout().format(loggingEvent));
+        Greg.log(layout == null ? loggingEvent.getRenderedMessage() : layout.format(loggingEvent));
     }
 
     public void close() {
