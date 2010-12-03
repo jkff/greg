@@ -21,18 +21,20 @@ public class Greg {
     private static final String hostname;
 
     static {
-        new Thread("GregPushMessages") {
+        Thread pushMessages = new Thread("GregPushMessages") {
             public void run() {
-                Thread.currentThread().setDaemon(true);
                 pushCurrentMessages();
             }
-        }.start();
-        new Thread("GregInitiateCalibration") {
+        };
+        pushMessages.setDaemon(true);
+        pushMessages.start();
+        Thread initCalibration = new Thread("GregInitiateCalibration") {
             public void run() {
-                Thread.currentThread().setDaemon(true);
                 initiateCalibration();
             }
-        }.start();
+        };
+        initCalibration.setDaemon(true);
+        initCalibration.start();
 
         try {
             hostname = InetAddress.getLocalHost().getHostName();
