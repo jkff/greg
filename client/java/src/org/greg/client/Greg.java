@@ -4,6 +4,10 @@ import java.io.*;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.UnknownHostException;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetEncoder;
 import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -11,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPOutputStream;
 
 public class Greg {
-    private static final Queue<Record> records = new ConcurrentLinkedQueue<Record>();
+    private static final ConcurrentLinkedQueue<Record> records = new ConcurrentLinkedQueue<Record>();
     private static final AtomicInteger numDropped = new AtomicInteger(0);
     // Don't use ConcurrentLinkedQueue.size() because it's O(n)
     private static final AtomicInteger numRecords = new AtomicInteger(0);
@@ -69,7 +73,7 @@ public class Greg {
         while (true) {
             while (records.isEmpty()) {
                 try {
-                    Thread.sleep(100);
+                    Thread.sleep(10);
                 } catch (InterruptedException e) {
                     continue;
                 }
@@ -141,23 +145,38 @@ public class Greg {
         w.writeInt(cidBytes.length);
         w.write(cidBytes);
         int recordsWritten = 0;
-        while (recordsWritten < maxBatchSize) {
+
+        byte[] machineBytes = hostname.getBytes("utf-8");
+
+        CharsetEncoder enc = Charset.forName("utf-8").newEncoder();
+
+        ByteBuffer maxMsg = ByteBuffer.allocate(1);
+        while(true) {
             Record rec = records.poll();
-            numRecords.decrementAndGet();
-            if (rec == null)
+            if(rec == null)
                 break;
+
             w.writeInt(1);
             w.writeLong(rec.timestamp.toUtcNanos());
-            byte[] machineBytes = hostname.getBytes("utf-8");
             w.writeInt(machineBytes.length);
             w.write(machineBytes);
-            byte[] bytes = rec.message.getBytes("utf-8");
-            w.writeInt(bytes.length);
-            w.write(bytes);
 
-            recordsWritten++;
+            int maxLen = rec.message.length() * 2;
+            if(maxLen > maxMsg.limit()) {
+                maxMsg = ByteBuffer.allocate(maxLen);
+            }
+            enc.reset();
+            enc.encode(CharBuffer.wrap(rec.message), maxMsg, true);
+            maxMsg.position(0);
+
+            w.writeInt(maxMsg.limit());
+            w.write(maxMsg.array(), maxMsg.arrayOffset(), maxMsg.limit());
+
+            if(++recordsWritten == maxBatchSize)
+                break;
         }
         w.writeInt(0);
+        numRecords.addAndGet(-recordsWritten);
 
         Trace.writeLine("Written batch of " + recordsWritten + " records to greg");
 

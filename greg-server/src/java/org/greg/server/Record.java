@@ -1,9 +1,9 @@
 package org.greg.server;
 
 public class Record {
-    public String machine;
+    public ByteSlice machine;
     public PreciseDateTime serverTimestamp;
     public PreciseDateTime timestamp;
-    public String message;
-    public String clientId;
+    public ByteSlice message;
+    public ByteSlice clientId;
 }

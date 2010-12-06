@@ -7,6 +7,8 @@ import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -73,9 +75,9 @@ public class GregServer {
                 try {
                     Thread.currentThread().setPriority(7); // Above normal
 
-                    Writer writer = new OutputStreamWriter(new BufferedOutputStream(new FileOutputStream(FileDescriptor.out), 16384));
+                    OutputStream os = new BufferedOutputStream(new FileOutputStream(FileDescriptor.out), 16384);
 
-                    String newline = System.getProperty("line.separator");
+                    byte[] newline = System.getProperty("line.separator").getBytes("utf-8");
 
                     while (true) {
                         List<Record> records = server.outputQueue.dequeue();
@@ -83,17 +85,19 @@ public class GregServer {
                             Thread.sleep(50);
                             continue;
                         }
+
                         for (Record rec : records) {
-                            writer.write(rec.machine);
-                            writer.write(' ');
-                            writer.write(rec.clientId);
-                            writer.write(' ');
-                            writer.write(rec.timestamp.toString());
-                            writer.write(' ');
-                            writer.write(rec.message);
-                            writer.write(newline);
+                            os.write(rec.machine.array, rec.machine.offset, rec.machine.len);
+                            os.write(' ');
+                            os.write(rec.clientId.array, rec.clientId.offset, rec.clientId.len);
+                            os.write(' ');
+                            byte[] ts = rec.timestamp.toBytes();
+                            os.write(ts);
+                            os.write(' ');
+                            os.write(rec.message.array, rec.message.offset, rec.message.len);
+                            os.write(newline);
                         }
-                        writer.flush();
+                        os.flush();
                     }
                 } catch (Exception e) {
                     Trace.writeLine("Failure while writing records", e);
@@ -184,38 +188,38 @@ public class GregServer {
             clientRecords.putIfAbsent(uuid, new ConcurrentLinkedQueue<Record>());
             final Queue<Record> q = clientRecords.get(uuid);
 
-            final AtomicBoolean skipping = new AtomicBoolean(false);
-            final AtomicInteger numRead = new AtomicInteger(0);
-            final AtomicInteger numSkipped = new AtomicInteger(0);
+            final boolean[] skipping = new boolean[] {false};
+            final int[] numRead = {0};
+            final int[] numSkipped = {0};
             Sink<Record> sink = new Sink<Record>() {
                 public void consume(Record rec) {
-                    numRead.incrementAndGet();
+                    numRead[0]++;
                     int numPending = numPendingUncalibratedEntries.incrementAndGet();
                     if (numPending < conf.maxPendingUncalibrated) {
                         q.offer(rec);
 
-                        if (skipping.get()) {
+                        if (skipping[0]) {
                             Trace.writeLine("Receiving entries from client " + ep + " again, after having skipped " + numSkipped);
                         }
-                        skipping.set(false);
-                        numSkipped.set(0);
+                        skipping[0] = false;
+                        numSkipped[0] = 0;
                     } else {
                         numPendingUncalibratedEntries.decrementAndGet();
 
-                        numSkipped.incrementAndGet();
-                        if (!skipping.get() || numSkipped.get() % 10000 == 0) {
+                        numSkipped[0]++;
+                        if (!skipping[0] || numSkipped[0] % 10000 == 0) {
                             Trace.writeLine(
                                     "Uncalibrated records buffer full - skipping entry from client " + ep +
                                             " because there are already " + numPending + " uncalibrated entries. " +
-                                            (numSkipped.get() == 1 ? "" : (numSkipped + " skipped in a row...")));
+                                            (numSkipped[0] == 1 ? "" : (numSkipped + " skipped in a row...")));
                         }
-                        skipping.set(true);
+                        skipping[0] = true;
                     }
                 }
             };
             readRecords(useCompression ? new GZIPInputStream(stream) : stream, sink);
 
-            if (skipping.get()) {
+            if (skipping[0]) {
                 Trace.writeLine("Skipped " + numSkipped + " entries from " + ep + " in a row.");
             }
             Trace.writeLine("Read " + numRead + " entries");
@@ -235,25 +239,22 @@ public class GregServer {
         int cidLenBytes = r.readInt();
         byte[] cidBytes = new byte[cidLenBytes];
         r.readFully(cidBytes);
-        String clientId = new String(cidBytes, "utf-8");
 
         while (0 != r.readInt()) {
             PreciseDateTime timestamp = new PreciseDateTime(r.readLong());
             int machineLenBytes = r.readInt();
             byte[] machineBytes = new byte[machineLenBytes];
             r.readFully(machineBytes);
-            String machine = new String(machineBytes, "utf-8");
             int msgLenBytes = r.readInt();
             byte[] msgBytes = new byte[msgLenBytes];
             r.readFully(msgBytes);
-            String msg = new String(msgBytes, "utf-8");
 
             Record rec = new Record();
-            rec.machine = machine;
+            rec.machine = new ByteSlice(machineBytes, 0, machineLenBytes);
             rec.timestamp = timestamp;
-            rec.message = msg;
+            rec.message = new ByteSlice(msgBytes, 0, msgBytes.length);
             rec.serverTimestamp = PreciseClock.INSTANCE.now();
-            rec.clientId = clientId;
+            rec.clientId = new ByteSlice(cidBytes, 0, cidBytes.length);
             sink.consume(rec);
         }
     }
@@ -365,13 +366,14 @@ public class GregServer {
     private void flushCalibratedMessages() {
         Thread.currentThread().setPriority(7); // above normal
         while(true) {
+            List<Pair<PreciseDateTime, Record>> snapshot = new ArrayList<Pair<PreciseDateTime, Record>>(10000);
             for (Map.Entry<UUID, TimeSpan> p : clientLateness.entrySet()) {
                 UUID client = p.getKey();
                 TimeSpan lateness = p.getValue();
 
                 Queue<Record> q = clientRecords.get(client);
                 if(q != null) {
-                    List<Pair<PreciseDateTime, Record>> snapshot = new ArrayList<Pair<PreciseDateTime, Record>>();
+                    snapshot.clear();
                     for(int i = 0; i < 10000; ++i) {
                         Record r = q.poll();
                         if(r == null) {
@@ -379,13 +381,13 @@ public class GregServer {
                         }
                         snapshot.add(absolutizeTime(r, lateness));
                     }
-//                    Trace.writeLine("Dequeued snapshot: " + snapshot.size());
+                    Trace.writeLine("Dequeued snapshot: " + snapshot.size());
                     numPendingUncalibratedEntries.addAndGet(-snapshot.size());
                     outputQueue.enqueue(snapshot);
                 }
             }
             try {
-                Thread.sleep(50);
+                Thread.sleep(10);
             } catch (InterruptedException e) {
                 continue;
             }
@@ -395,13 +397,8 @@ public class GregServer {
     private static Pair<PreciseDateTime, Record> absolutizeTime(Record rec, TimeSpan lateness) {
         PreciseDateTime t = new PreciseDateTime(rec.timestamp.toUtcNanos() - lateness.toNanos());
 
-        Record r = new Record();
-        r.clientId = rec.clientId;
-        r.machine = rec.machine;
-        r.message = rec.message;
-        r.timestamp = t;
-        r.serverTimestamp = rec.serverTimestamp;
+        rec.timestamp = t;
 
-        return new Pair<PreciseDateTime, Record>(t, r);
+        return new Pair<PreciseDateTime, Record>(t, rec);
     }
 }

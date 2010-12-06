@@ -6,7 +6,7 @@ public class Configuration {
     public final int calibrationPort = Integer.parseInt(System.getProperty("greg.calibrationPort", "5677"));
     public final int flushPeriodMs = Integer.parseInt(System.getProperty("greg.flushPeriodMs", "1000"));
     public final String clientId = System.getProperty("greg.clientId", "unknown");
-    public final int maxBufferedRecords = Integer.parseInt(System.getProperty("greg.maxBufferedRecords", "100000"));
+    public final int maxBufferedRecords = Integer.parseInt(System.getProperty("greg.maxBufferedRecords", "1000000"));
     public final boolean useCompression = Boolean.parseBoolean(System.getProperty("greg.useCompression", "true"));
     public final int calibrationPeriodSec = Integer.parseInt(System.getProperty("greg.calibrationPeriodSec", "10"));
 

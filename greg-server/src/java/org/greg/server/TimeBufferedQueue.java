@@ -9,7 +9,7 @@ public class TimeBufferedQueue<T> {
 
     private final PriorityQueue<Pair<PreciseDateTime, T>> inputQueue;
     private final int maxQueuedRecords;
-    private final AtomicInteger numRecords = new AtomicInteger(0);
+    private int numRecords = 0;
 
     private final Object sync = new Object();
 
@@ -20,26 +20,17 @@ public class TimeBufferedQueue<T> {
         this.inputQueue = new PriorityQueue<Pair<PreciseDateTime, T>>(1, Pair.<PreciseDateTime, T>compareOnSecond(comparer));
     }
 
-    public void enqueue(Iterable<Pair<PreciseDateTime,T>> entries) {
+    public void enqueue(List<Pair<PreciseDateTime,T>> entries) {
         synchronized(sync) {
-            boolean dropping = false;
-            int numDropped = 0;
+            int toOffer = Math.min(entries.size(), maxQueuedRecords - numRecords);
 
-            for (Pair<PreciseDateTime, T> pair : entries) {
-                if (!dropping && numRecords.incrementAndGet() > maxQueuedRecords) {
-                    numRecords.decrementAndGet();
-                    dropping = true;
-                }
-
-                if (dropping) {
-                    numDropped++;
-                } else {
-                    inputQueue.offer(pair);
-                }
+            for (int i = 0; i < toOffer; ++i) {
+                inputQueue.offer(entries.get(i));
             }
 
-            if (dropping) {
-                Trace.writeLine("Calibrated records buffer full - " + numDropped + " records dropped");
+            numRecords += toOffer;
+            if(entries.size() > toOffer) {
+                Trace.writeLine("Calibrated records buffer full - " + (entries.size() - toOffer) + " records dropped");
             }
         }
     }
@@ -54,7 +45,7 @@ public class TimeBufferedQueue<T> {
                 if (item == null || item.first.add(windowSize).compareTo(dueTime) > 0)
                     break;
                 inputQueue.remove();
-                numRecords.decrementAndGet();
+                numRecords--;
                 res.add(item.second);
             }
         }
