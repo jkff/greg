@@ -191,12 +191,15 @@ public class GregServer {
             final boolean[] skipping = new boolean[] {false};
             final int[] numRead = {0};
             final int[] numSkipped = {0};
+
+            final List<Record> recs = new LinkedList<Record>();
+
             Sink<Record> sink = new Sink<Record>() {
                 public void consume(Record rec) {
                     numRead[0]++;
                     int numPending = numPendingUncalibratedEntries.incrementAndGet();
                     if (numPending < conf.maxPendingUncalibrated) {
-                        q.offer(rec);
+                        recs.add(rec);
 
                         if (skipping[0]) {
                             Trace.writeLine("Receiving entries from client " + ep + " again, after having skipped " + numSkipped);
@@ -218,6 +221,10 @@ public class GregServer {
                 }
             };
             readRecords(useCompression ? new GZIPInputStream(stream) : stream, sink);
+
+            // Only publish records to main queue if we read all them successfully (had no exception to this point)
+            // Otherwise we'd have duplicates if clients resubmit their records after failure.
+            q.addAll(recs);
 
             if (skipping[0]) {
                 Trace.writeLine("Skipped " + numSkipped + " entries from " + ep + " in a row.");
