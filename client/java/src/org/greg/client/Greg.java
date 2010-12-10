@@ -151,11 +151,7 @@ public class Greg {
         CharsetEncoder enc = Charset.forName("utf-8").newEncoder();
 
         ByteBuffer maxMsg = ByteBuffer.allocate(1);
-        while(true) {
-            Record rec = records.poll();
-            if(rec == null)
-                break;
-
+        for(Record rec : records) {
             w.writeInt(1);
             w.writeLong(rec.timestamp.toUtcNanos());
             w.writeInt(machineBytes.length);
@@ -176,6 +172,12 @@ public class Greg {
                 break;
         }
         w.writeInt(0);
+
+        // Only remove records once we're sure that they have been written to server (no exception happened to this point)
+        stream.flush();
+        for(int i = 0; i < recordsWritten; ++i) {
+            records.remove();
+        }
         numRecords.addAndGet(-recordsWritten);
 
         Trace.writeLine("Written batch of " + recordsWritten + " records to greg");
