@@ -182,7 +182,7 @@ public class GregServer {
             InputStream stream = new BufferedInputStream(rawStream, 65536);
 
             DataInput r = new LittleEndianDataInputStream(stream);
-            UUID uuid = new UUID(r.readLong(), r.readLong());
+            final UUID uuid = new UUID(r.readLong(), r.readLong());
             boolean useCompression = r.readBoolean();
 
             clientRecords.putIfAbsent(uuid, new ConcurrentLinkedQueue<Record>());
@@ -192,44 +192,54 @@ public class GregServer {
             final int[] numRead = {0};
             final int[] numSkipped = {0};
 
-            final List<Record> recs = new LinkedList<Record>();
+            final List<Record> uncalibrated = new ArrayList<Record>();
+            final List<Pair<PreciseDateTime, Record>> calibrated = new ArrayList<Pair<PreciseDateTime, Record>>();
+
+            final TimeSpan lateness = clientLateness.get(uuid);
 
             Sink<Record> sink = new Sink<Record>() {
                 public void consume(Record rec) {
                     numRead[0]++;
-                    int numPending = numPendingUncalibratedEntries.incrementAndGet();
-                    if (numPending < conf.maxPendingUncalibrated) {
-                        recs.add(rec);
 
-                        if (skipping[0]) {
-                            Trace.writeLine("Receiving entries from client " + ep + " again, after having skipped " + numSkipped);
+                    if(lateness == null) {
+                        int numPending = numPendingUncalibratedEntries.incrementAndGet();
+                        if (numPending < conf.maxPendingUncalibrated) {
+                            uncalibrated.add(rec);
+
+                            if (skipping[0]) {
+                                Trace.writeLine("Receiving entries from client " + ep + " again, after having skipped " + numSkipped[0]);
+                            }
+                            skipping[0] = false;
+                            numSkipped[0] = 0;
+                        } else {
+                            numPendingUncalibratedEntries.decrementAndGet();
+
+                            numSkipped[0]++;
+                            if (!skipping[0] || numSkipped[0] % 10000 == 0) {
+                                Trace.writeLine(
+                                        "Uncalibrated records buffer full - skipping entry from client " + ep +
+                                                " because there are already " + numPending + " uncalibrated entries. " +
+                                                (numSkipped[0] == 1 ? "" : (numSkipped[0] + " skipped in a row...")));
+                            }
+                            skipping[0] = true;
                         }
-                        skipping[0] = false;
-                        numSkipped[0] = 0;
                     } else {
-                        numPendingUncalibratedEntries.decrementAndGet();
-
-                        numSkipped[0]++;
-                        if (!skipping[0] || numSkipped[0] % 10000 == 0) {
-                            Trace.writeLine(
-                                    "Uncalibrated records buffer full - skipping entry from client " + ep +
-                                            " because there are already " + numPending + " uncalibrated entries. " +
-                                            (numSkipped[0] == 1 ? "" : (numSkipped + " skipped in a row...")));
-                        }
-                        skipping[0] = true;
+                        calibrated.add(absolutizeTime(rec, lateness));
                     }
                 }
             };
+
             readRecords(useCompression ? new GZIPInputStream(stream) : stream, sink);
 
             // Only publish records to main queue if we read all them successfully (had no exception to this point)
             // Otherwise we'd have duplicates if clients resubmit their records after failure.
-            q.addAll(recs);
+            q.addAll(uncalibrated);
+            outputQueue.enqueue(calibrated);
 
             if (skipping[0]) {
-                Trace.writeLine("Skipped " + numSkipped + " entries from " + ep + " in a row.");
+                Trace.writeLine("Skipped " + numSkipped[0] + " entries from " + ep + " in a row.");
             }
-            Trace.writeLine("Read " + numRead + " entries");
+            Trace.writeLine("Read " + numRead[0] + " entries");
         } catch (Exception e) {// Socket or IO or whatever
             Trace.writeLine("Failed to receive records batch, ignoring", e);
             // Ignore
@@ -247,6 +257,8 @@ public class GregServer {
         byte[] cidBytes = new byte[cidLenBytes];
         r.readFully(cidBytes);
 
+        ByteSlice clientId = new ByteSlice(cidBytes, 0, cidBytes.length);
+
         while (0 != r.readInt()) {
             PreciseDateTime timestamp = new PreciseDateTime(r.readLong());
             int machineLenBytes = r.readInt();
@@ -261,7 +273,7 @@ public class GregServer {
             rec.timestamp = timestamp;
             rec.message = new ByteSlice(msgBytes, 0, msgBytes.length);
             rec.serverTimestamp = PreciseClock.INSTANCE.now();
-            rec.clientId = new ByteSlice(cidBytes, 0, cidBytes.length);
+            rec.clientId = clientId;
             sink.consume(rec);
         }
     }
