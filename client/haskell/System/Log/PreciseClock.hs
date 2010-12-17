@@ -1,4 +1,4 @@
-module PreciseClock (preciseTimeSpec, preciseTimestamp) where
+module System.Log.PreciseClock (preciseTimeSpec, preciseTimestamp) where
 
 import System.Posix.Clock
 import Data.Time.Clock

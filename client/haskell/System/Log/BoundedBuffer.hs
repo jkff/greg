@@ -1,4 +1,4 @@
-module BoundedBuffer (Buf(), makeBuf, push, poll, DropEvent(..)) where
+module System.Log.BoundedBuffer (Buf(), makeBuf, push, poll, DropEvent(..)) where
 
 import Control.Concurrent.MVar
 import Control.Monad
