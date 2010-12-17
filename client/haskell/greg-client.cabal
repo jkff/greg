@@ -18,11 +18,12 @@ Source-repository head
 flag splitbase
   description: Choose the new smaller, split-up base package.
 
-library greg-client
+library
   if flag(splitbase)
     Build-Depends: base >= 3 && < 5
   else
     Build-Depends: base < 3
 
-  Build-Depends: bytestring, time, binary, containers, haskell98
+  Build-Depends: bytestring, time, binary, containers, haskell98, 
+                 system-uuid, hostname, network >= 2.3, clock >= 0.1.2.1
   Exposed-Modules: System.Log.Greg
