@@ -24,6 +24,10 @@ library
   else
     Build-Depends: base < 3
 
+  hs-source-dirs: .
+  ghc-options: -Wall -fno-warn-name-shadowing -fno-warn-orphans
   Build-Depends: bytestring, time, binary, containers, haskell98, 
                  system-uuid, hostname, network >= 2.3, clock >= 0.1.2.1
   Exposed-Modules: System.Log.Greg
+  Other-Modules: System.Log.BoundedBuffer
+                 System.Log.PreciseClock
