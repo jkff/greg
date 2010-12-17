@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP, MagicHash #-}
-module Greg (log) where
+module System.Log.Greg (log) where
 
 import Prelude hiding (log, getContents)
 
