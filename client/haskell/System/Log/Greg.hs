@@ -3,8 +3,8 @@ module System.Log.Greg (log) where
 
 import Prelude hiding (log, getContents)
 
-import BoundedBuffer
-import PreciseClock
+import System.Log.BoundedBuffer
+import System.Log.PreciseClock
 import System.Posix.Clock
 
 import Data.ByteString.Unsafe
