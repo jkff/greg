@@ -1,6 +1,14 @@
 {-# LANGUAGE CPP, MagicHash #-}
 module System.Log.Greg (log) where
 
+{-
+Idea:
+Messages are stored in Chan/TChan
+1 thread performs calibration and controls socket
+1 'keeper' thread takes messages from tchan and offloads them to sender thread(s). Also, keeps tchan size in check, and controls socket
+1 'sender' delivers the batch of messages to the server
+-}
+
 import Prelude hiding (log, getContents)
 
 import System.Log.BoundedBuffer
@@ -42,6 +50,7 @@ import Control.Exception
 import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Concurrent.Chan
+import Control.Concurrent.STM
 import System.IO.Unsafe
 import Control.Monad
 
@@ -52,7 +61,8 @@ data Record = Record {
 
 data GregState = GregState { 
         configuration :: Configuration,
-        records :: Buf Record
+        records :: TChan Record,
+        packet :: TMVar [Record]
     }
 
 data Configuration = Configuration {
@@ -81,15 +91,17 @@ defaultConfiguration = Configuration {
         calibrationPeriodSec = 10
     }
 
-withGregDo :: Configuration -> IO () -> IO ()
-withGregDo conf main = withSocketsDo $ do
-  records <- makeBuf (maxBufferedRecords conf) 
+{- TODO:
+makeBuf (maxBufferedRecords conf) 
                      (\de -> case de of
                         Started     -> putStrLn "Started dropping"
                         Stopped   t -> putStrLn ("Stopped dropping, dropped " ++ show t)
                         Continued t -> putStrLn ("Still dropping, dropped " ++ show t))
-  let st = GregState conf records
-  let conf = configuration st
+  -}
+withGregDo :: Configuration -> IO () -> IO ()
+withGregDo conf main = withSocketsDo $ do
+  st' <- atomically $ readTVar state
+  let st = st' {configuration = conf}
   let withAdr host port f = do {
      ai <- getAddrInfo (Just AddrInfo {
         addrFlags=[AI_ADDRCONFIG,AI_NUMERICSERV], 
@@ -107,21 +119,41 @@ withGregDo conf main = withSocketsDo $ do
      }
   }
 
+  atomically $ writeTVar state st
+  -- Packer thread
   withAdr (server conf) (port conf) $ \adr -> 
-    forkIO $ forever (pushRecordsOnce         st adr >> threadDelay (1000*flushPeriodMs conf))
+    forkIO $ forever (packRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
+
+  -- Calibration thread
   withAdr (server conf) (calibrationPort conf) $ \adr -> 
     forkIO $ forever (initiateCalibrationOnce st adr >> threadDelay (1000000*calibrationPeriodSec conf))
-  putMVar state st
+
+  -- Sender thread
+  withAdr (server conf) (port conf) $ \adr -> 
+    forkIO $ forever (pushRecordsOnce         st adr >> threadDelay (1000*flushPeriodMs conf))
+
   main
+
+packRecordsOnce :: GregState -> IO ()
+packRecordsOnce st = do
+  atomically $ do rs <- readAll
+                  if null rs then retry
+                    else putTMVar (packet st) rs
+  where
+    readAll = do empty <- isEmptyTChan (records st)
+                 if empty then return []
+                   else do r <- readTChan (records st)
+                           rest <- readAll
+                           return (r:rest)
 
 pushRecordsOnce :: GregState -> SockAddr -> IO ()
 pushRecordsOnce st adr = do
+  rs <- atomically $ takeTMVar $ packet st
   putStrLn "Pushing records"
   bracket (socket AF_INET Stream defaultProtocol) sClose $ \sock -> do
     putStrLn "Pushing records - connecting..."
     connect sock adr
     putStrLn "Pushing records - connected"
-    rs <- snapshotRecords st
     let msg = formatRecords (configuration st) rs
     putStrLn $ "Snapshotted " ++ show (length rs) ++ " records --> " ++ show (B.length msg) ++ " bytes"
     sendAll sock msg
@@ -144,15 +176,6 @@ putRecord r = do
   putWord32le (fromIntegral $ B.length (message r))
   putByteString (message r)
 
-snapshotRecords :: GregState -> IO [Record]
-snapshotRecords st = do
-  let buf = records st
-  let loop rs = do {
-     mr <- poll buf
-   ; case mr of { Just r -> loop (r:rs) ; Nothing -> return rs }
-   }
-  loop []
-
 initiateCalibrationOnce :: GregState -> SockAddr -> IO ()
 initiateCalibrationOnce st adr = do
   putStrLn "Initiating calibration"
@@ -167,23 +190,25 @@ initiateCalibrationOnce st adr = do
       allocaBytes 8 $ \pOurTimestamp -> do
       allocaBytes 8 $ \pTheirTimestamp -> do
       let whenM mp m = mp >>= \v -> when v m
-      let loop = whenM (hSkipBytes h 8 pTheirTimestamp) $ do {
+      forever $ do
+        whenM (hSkipBytes h 8 pTheirTimestamp) $ do {
         ; ts <- preciseTimeSpec
         ; writeWord64le (toNanos64 ts) pOurTimestamp
         ; hPutBuf h pOurTimestamp 8
         ; putStrLn "Calibration - next loop iteration passed"
-        ; loop
         }
-      loop
 
-state :: MVar GregState
-state = unsafePerformIO newEmptyMVar
+state :: TVar GregState
+state = unsafePerformIO $ do rs <- newTChanIO
+                             pkt <- newEmptyTMVarIO
+                             newTVarIO $ GregState defaultConfiguration rs pkt
 
 log :: String -> IO ()
 log s = do
   t <- preciseTimeSpec
-  st <- takeMVar state
-  push (records st) (Record {timestamp = t, message = B.pack s})
+  atomically $ do 
+    st <- readTVar state
+    writeTChan (records st) (Record {timestamp = t, message = B.pack s})
 
 --------------------------------------------------------------------------
 -- Utilities
