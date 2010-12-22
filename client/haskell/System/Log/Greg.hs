@@ -107,10 +107,10 @@ checkQueueSize st = do
   let maxrs = maxBufferedRecords (configuration st)
   droppingNow <- atomically $ readTVar (isDropping st)
   case (droppingNow, currsize > maxrs) of
-    (True , True) -> putStrLnT ("Still dropping (queue " ++ show currsize ++ ")")
-    (False, True) -> do putStrLnT ("Started to drop (queue " ++ show currsize ++ ")")
+    (True , True) -> putStrLn ("Still dropping (queue " ++ show currsize ++ ")")
+    (False, True) -> do putStrLn ("Started to drop (queue " ++ show currsize ++ ")")
                         atomically $ writeTVar (isDropping st) True
-    (True, False) -> do putStrLnT ("Stopped dropping (queue " ++ show currsize ++ ")")
+    (True, False) -> do putStrLn ("Stopped dropping (queue " ++ show currsize ++ ")")
                         atomically $ writeTVar (isDropping st) False
     (False, False) -> return () -- everything is OK
 
