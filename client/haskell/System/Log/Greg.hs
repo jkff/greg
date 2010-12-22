@@ -87,7 +87,10 @@ withGregDo conf realMain = withSocketsDo $ do
                         let st' = st{configuration = conf}
                         writeTVar state $ st'
                         return st'
-  -- Packer thread
+  -- Calibration thread
+  forkIO $ forever (initiateCalibrationOnce st >> threadDelay (1000000*calibrationPeriodSec conf))
+
+  -- Packer thread that offloads records to sender thread
   forkIO $ forever (packRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
 
   -- Housekeeping thread that keeps queue size at check
@@ -167,11 +170,14 @@ initiateCalibrationOnce st = do
     allocaBytes 8 $ \pOurTimestamp -> do
       allocaBytes 8 $ \pTheirTimestamp -> do
         let whenM mp m = mp >>= \v -> when v m
-        forever $ whenM (hSkipBytes hdl 8 pTheirTimestamp) $ do
-          ts <- preciseTimeSpec
-          writeWord64le (toNanos64 ts) pOurTimestamp
-          hPutBuf hdl pOurTimestamp 8
-          putStrLn "Calibration - next loop iteration passed"
+            loop = whenM (hSkipBytes hdl 8 pTheirTimestamp) $ do
+                    ts <- preciseTimeSpec
+                    writeWord64le (toNanos64 ts) pOurTimestamp
+                    hPutBuf hdl pOurTimestamp 8
+                    -- putStrLn "Calibration - next loop iteration passed"
+                    loop
+        loop
+  putStrLn "Calibration ended - sleeping"
 
 state :: TVar GregState
 state = unsafePerformIO $ do rs <- newTChanIO
@@ -198,10 +204,13 @@ toNanos64 (TimeSpec s ns) = fromIntegral (ns + 1000000000*s)
 hSkipBytes :: Handle -> Int -> Ptr a -> IO Bool
 hSkipBytes _ 0 _ = return True
 hSkipBytes h n p = do
-  skipped <- hGetBuf h p n 
-  if skipped < 0 
-    then return False 
-    else hSkipBytes h (n-skipped) p
+  closed <- hIsEOF h
+  if closed 
+    then return False
+    else do skipped <- hGetBuf h p n 
+            if skipped < 0 
+              then return False 
+              else hSkipBytes h (n-skipped) p
 
 repack :: L.ByteString -> B.ByteString
 repack = B.concat . L.toChunks
@@ -269,8 +278,6 @@ writeWord64le w p = do
 {-# INLINE writeWord64le #-}
 
 atomModTVar var f = atomically $ readTVar var >>= \val -> writeTVar var (f val)
-
-putStrLnT str = traceEvent str >> putStrLn str
 
 main :: IO ()
 main = withGregDo defaultConfiguration $ forever $ log "Hello" >> threadDelay 1000
