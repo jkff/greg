@@ -292,8 +292,9 @@ public class GregServer {
             final Socket client;
             try {
                 client = calibrationServer.accept();
+                client.setTcpNoDelay(true);
             } catch (Exception e) {
-                Trace.writeLine("Failed to accept client for calibration or get its endpoint", e);
+                Trace.writeLine("Failed to accept client for calibration", e);
                 continue;
             }
             final SocketAddress ep = client.getRemoteSocketAddress();
