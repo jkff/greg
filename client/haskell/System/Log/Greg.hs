@@ -285,4 +285,4 @@ writeWord64le w p = do
 atomModTVar var f = atomically $ readTVar var >>= \val -> writeTVar var (f val)
 
 main :: IO ()
-main = withGregDo defaultConfiguration $ forever $ log "Hello" >> threadDelay 1000
+main = withGregDo defaultConfiguration $ forever $ logMessage "Hello" -- >> threadDelay 1000
