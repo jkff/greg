@@ -62,6 +62,7 @@ data Record = Record {
 data GregState = GregState { 
         configuration :: Configuration,
         records :: TChan Record,
+        numRecords :: TMVar Int,
         packet :: TMVar [Record]
     }
 
@@ -124,6 +125,10 @@ withGregDo conf main = withSocketsDo $ do
   withAdr (server conf) (port conf) $ \adr -> 
     forkIO $ forever (packRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
 
+  -- Housekeeping thread that keeps queue size at check
+  withAdr (server conf) (port conf) $ \adr -> 
+    forkIO $ forever (trimRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
+
   -- Calibration thread
   withAdr (server conf) (calibrationPort conf) $ \adr -> 
     forkIO $ forever (initiateCalibrationOnce st adr >> threadDelay (1000000*calibrationPeriodSec conf))
@@ -134,11 +139,32 @@ withGregDo conf main = withSocketsDo $ do
 
   main
 
+trimRecordsOnce :: GregState -> IO ()
+trimRecordsOnce st = do
+  currsize <- atomically $ readTMVar (numRecords st)
+  let maxrs = maxBufferedRecords (configuration st)
+  when (currsize > maxrs) $ do
+    numdropped <- atomically $ do
+      numrs <- takeTMVar (numRecords st)
+      let toDrop = numrs - maxrs
+      drop toDrop
+      putTMVar (numRecords st) (numrs - toDrop)
+      return toDrop
+    putStrLn ("Dropped " ++ show numdropped ++ " messages")
+  where
+    drop 0 = return ()
+    drop n = do _ <- readTChan (records st)
+                drop (n-1)
+
 packRecordsOnce :: GregState -> IO ()
 packRecordsOnce st = do
   atomically $ do rs <- readAll
                   if null rs then retry
-                    else putTMVar (packet st) rs
+                    else do -- putting messages in the outbox
+                            putTMVar (packet st) rs
+                            -- decreasing queue size
+                            numrs <- takeTMVar (numRecords st)
+                            putTMVar (numRecords st) (numrs - (length rs))
   where
     readAll = do empty <- isEmptyTChan (records st)
                  if empty then return []
@@ -200,8 +226,9 @@ initiateCalibrationOnce st adr = do
 
 state :: TVar GregState
 state = unsafePerformIO $ do rs <- newTChanIO
+                             numrs <- newTMVarIO 0
                              pkt <- newEmptyTMVarIO
-                             newTVarIO $ GregState defaultConfiguration rs pkt
+                             newTVarIO $ GregState defaultConfiguration rs numrs pkt
 
 log :: String -> IO ()
 log s = do
@@ -209,6 +236,8 @@ log s = do
   atomically $ do 
     st <- readTVar state
     writeTChan (records st) (Record {timestamp = t, message = B.pack s})
+    numrs <- takeTMVar (numRecords st)
+    putTMVar (numRecords st) (numrs + 1)
 
 --------------------------------------------------------------------------
 -- Utilities
