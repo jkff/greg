@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP, MagicHash #-}
-module System.Log.Greg (log) where
+module System.Log.Greg (log, withGregDo) where
 
 {-
 Idea:
@@ -11,7 +11,6 @@ Messages are stored in Chan/TChan
 
 import Prelude hiding (log, getContents)
 
-import System.Log.BoundedBuffer
 import System.Log.PreciseClock
 import System.Posix.Clock
 
@@ -22,19 +21,12 @@ import Data.Binary
 import Data.Binary.Put
 
 import Network
-import Network.Socket
-import Network.HostName
-import Network.Socket.ByteString
+import Network.HostName (getHostName)
 
-import Data.UUID
 import System.UUID.V4
-
-import Data.Time.Clock
 
 import System.IO
 import Foreign
-import Foreign.Ptr
-import Foreign.Marshal.Alloc
 
 #if defined(__GLASGOW_HASKELL__) && !defined(__HADDOCK__)
 import GHC.Base
@@ -49,10 +41,7 @@ import Data.Word
 
 import Control.Exception
 import Control.Concurrent
-import Control.Concurrent.MVar
-import Control.Concurrent.Chan
 import Control.Concurrent.STM
-import System.IO.Unsafe
 import Control.Monad
 
 data Record = Record {
@@ -78,6 +67,7 @@ data Configuration = Configuration {
         calibrationPeriodSec :: Int
     }
 
+hostname, ourUuid :: B.ByteString
 hostname = B.pack $ unsafePerformIO getHostName
 ourUuid = repack . runPut . put $ unsafePerformIO uuid
 
@@ -101,7 +91,7 @@ makeBuf (maxBufferedRecords conf)
                         Continued t -> putStrLn ("Still dropping, dropped " ++ show t))
   -}
 withGregDo :: Configuration -> IO () -> IO ()
-withGregDo conf main = withSocketsDo $ do
+withGregDo conf realMain = withSocketsDo $ do
   st <- atomically $ do st <- readTVar state
                         let st' = st{configuration = conf}
                         writeTVar state $ st'
@@ -118,7 +108,7 @@ withGregDo conf main = withSocketsDo $ do
   -- Sender thread
   forkIO $ forever (pushRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
 
-  main
+  realMain
 
 trimRecordsOnce :: GregState -> IO ()
 trimRecordsOnce st = do
@@ -294,6 +284,5 @@ writeWord64le w p = do
 {-# INLINE writeWord64le #-}
 
 
-
-
+main :: IO ()
 main = withGregDo defaultConfiguration $ forever $ log "Hello" >> threadDelay 1000
