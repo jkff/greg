@@ -21,6 +21,7 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Binary
 import Data.Binary.Put
 
+import Network
 import Network.Socket
 import Network.HostName
 import Network.Socket.ByteString
@@ -101,41 +102,21 @@ makeBuf (maxBufferedRecords conf)
   -}
 withGregDo :: Configuration -> IO () -> IO ()
 withGregDo conf main = withSocketsDo $ do
-  st' <- atomically $ readTVar state
-  let st = st' {configuration = conf}
-  let withAdr host port f = do {
-     ai <- getAddrInfo (Just AddrInfo {
-        addrFlags=[AI_ADDRCONFIG,AI_NUMERICSERV], 
-        addrFamily=AF_INET, 
-        addrSocketType=Stream, 
-        addrProtocol=defaultProtocol}) (Just host) (Just (show port))
-   ; case ai of {
-       []   -> putStrLn $ "Cannot resolve " ++ host
-     ; a:as -> do {
-          when (not (null as)) $ putStrLn $ "Ignored other addresses of " ++ host ++ ": " ++ show as
-        ; let adr = addrAddress a
-        ; f adr
-        ; return ()
-       }
-     }
-  }
-
-  atomically $ writeTVar state st
+  st <- atomically $ do st <- readTVar state
+                        let st' = st{configuration = conf}
+                        writeTVar state $ st'
+                        return st'
   -- Packer thread
-  withAdr (server conf) (port conf) $ \adr -> 
-    forkIO $ forever (packRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
+  forkIO $ forever (packRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
 
   -- Housekeeping thread that keeps queue size at check
-  withAdr (server conf) (port conf) $ \adr -> 
-    forkIO $ forever (trimRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
+  forkIO $ forever (trimRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
 
   -- Calibration thread
-  withAdr (server conf) (calibrationPort conf) $ \adr -> 
-    forkIO $ forever (initiateCalibrationOnce st adr >> threadDelay (1000000*calibrationPeriodSec conf))
+  forkIO $ forever (initiateCalibrationOnce st >> threadDelay (1000000*calibrationPeriodSec conf))
 
   -- Sender thread
-  withAdr (server conf) (port conf) $ \adr -> 
-    forkIO $ forever (pushRecordsOnce         st adr >> threadDelay (1000*flushPeriodMs conf))
+  forkIO $ forever (pushRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
 
   main
 
@@ -172,17 +153,16 @@ packRecordsOnce st = do
                            rest <- readAll
                            return (r:rest)
 
-pushRecordsOnce :: GregState -> SockAddr -> IO ()
-pushRecordsOnce st adr = do
+pushRecordsOnce :: GregState -> IO ()
+pushRecordsOnce st = do
   rs <- atomically $ takeTMVar $ packet st
+  let conf = configuration st
   putStrLn "Pushing records"
-  bracket (socket AF_INET Stream defaultProtocol) sClose $ \sock -> do
-    putStrLn "Pushing records - connecting..."
-    connect sock adr
+  bracket (connectTo (server conf) (PortNumber $ fromIntegral $ port conf)) hClose $ \hdl -> do
     putStrLn "Pushing records - connected"
     let msg = formatRecords (configuration st) rs
     putStrLn $ "Snapshotted " ++ show (length rs) ++ " records --> " ++ show (B.length msg) ++ " bytes"
-    sendAll sock msg
+    unsafeUseAsCStringLen msg $ \(ptr, len) -> hPutBuf hdl ptr len
 
 formatRecords :: Configuration -> [Record] -> B.ByteString
 formatRecords conf records = repack . runPut $ do
@@ -202,27 +182,22 @@ putRecord r = do
   putWord32le (fromIntegral $ B.length (message r))
   putByteString (message r)
 
-initiateCalibrationOnce :: GregState -> SockAddr -> IO ()
-initiateCalibrationOnce st adr = do
+initiateCalibrationOnce :: GregState -> IO ()
+initiateCalibrationOnce st = do
   putStrLn "Initiating calibration"
-  bracket (socket AF_INET Stream defaultProtocol) sClose $ \sock -> do
-    setSocketOption sock NoDelay 1
-    putStrLn "Calibration - connecting..."
-    connect sock adr
+  let conf = configuration st
+  bracket (connectTo (server conf) (PortNumber $ fromIntegral $ calibrationPort conf)) hClose $ \hdl -> do
+    hSetBuffering hdl NoBuffering
     putStrLn "Calibration - connected"
-    bracket (socketToHandle sock ReadWriteMode) hClose $ \h -> do
-      putStrLn "Calibration - converted socket to handle"
-      unsafeUseAsCString ourUuid $ \p -> hPutBuf h p 16
-      allocaBytes 8 $ \pOurTimestamp -> do
+    unsafeUseAsCString ourUuid $ \p -> hPutBuf hdl p 16
+    allocaBytes 8 $ \pOurTimestamp -> do
       allocaBytes 8 $ \pTheirTimestamp -> do
-      let whenM mp m = mp >>= \v -> when v m
-      forever $ do
-        whenM (hSkipBytes h 8 pTheirTimestamp) $ do {
-        ; ts <- preciseTimeSpec
-        ; writeWord64le (toNanos64 ts) pOurTimestamp
-        ; hPutBuf h pOurTimestamp 8
-        ; putStrLn "Calibration - next loop iteration passed"
-        }
+        let whenM mp m = mp >>= \v -> when v m
+        forever $ whenM (hSkipBytes hdl 8 pTheirTimestamp) $ do
+          ts <- preciseTimeSpec
+          writeWord64le (toNanos64 ts) pOurTimestamp
+          hPutBuf hdl pOurTimestamp 8
+          putStrLn "Calibration - next loop iteration passed"
 
 state :: TVar GregState
 state = unsafePerformIO $ do rs <- newTChanIO
