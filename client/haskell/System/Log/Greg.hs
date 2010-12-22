@@ -97,7 +97,7 @@ withGregDo conf realMain = withSocketsDo $ do
   forkIO $ forever (checkQueueSize          st >> threadDelay (1000*flushPeriodMs conf))
 
   -- Sender thread
-  forkIO $ forever (pushRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
+  forkIO $ forever (sendPacketOnce          st >> threadDelay (1000*flushPeriodMs conf))
 
   realMain
 
@@ -130,8 +130,8 @@ packRecordsOnce st = do
                            rest <- readAll
                            return (r:rest)
 
-pushRecordsOnce :: GregState -> IO ()
-pushRecordsOnce st = do
+sendPacketOnce :: GregState -> IO ()
+sendPacketOnce st = do
   rs <- atomically $ takeTMVar $ packet st
   let conf = configuration st
   putStrLn "Pushing records"
