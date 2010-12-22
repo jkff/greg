@@ -143,6 +143,8 @@ sendPacketOnce st = do
     let msg = formatRecords (configuration st) rs
     putStrLn $ "Snapshotted " ++ show (length rs) ++ " records --> " ++ show (B.length msg) ++ " bytes"
     unsafeUseAsCStringLen msg $ \(ptr, len) -> hPutBuf hdl ptr len
+    hFlush hdl
+  putStrLn $ "Pushing records - done"
 
 formatRecords :: Configuration -> [Record] -> B.ByteString
 formatRecords conf records = repack . runPut $ do
