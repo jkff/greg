@@ -25,16 +25,7 @@ import System.UUID.V4
 import System.IO
 import Foreign
 
-#if defined(__GLASGOW_HASKELL__) && !defined(__HADDOCK__)
-import GHC.Base
 import GHC.Word (Word32(..),Word16(..),Word64(..))
-
-#if WORD_SIZE_IN_BITS < 64 && __GLASGOW_HASKELL__ >= 608
-import GHC.Word (uncheckedShiftRL64#)
-#endif
-#else
-import Data.Word
-#endif
 
 import Control.Exception
 import Control.Concurrent
@@ -172,16 +163,15 @@ initiateCalibrationOnce st = do
     hSetBuffering hdl NoBuffering
     putStrLn "Calibration - connected"
     unsafeUseAsCString ourUuid $ \p -> hPutBuf hdl p 16
-    allocaBytes 8 $ \pOurTimestamp -> do
-      allocaBytes 8 $ \pTheirTimestamp -> do
-        let whenM mp m = mp >>= \v -> when v m
-            loop = whenM (hSkipBytes hdl 8 pTheirTimestamp) $ do
-                    ts <- preciseTimeSpec
-                    writeWord64le (toNanos64 ts) pOurTimestamp
-                    hPutBuf hdl pOurTimestamp 8
-                    -- putStrLn "Calibration - next loop iteration passed"
-                    loop
-        loop
+    allocaBytes 8 $ \pTheirTimestamp -> do
+      let whenM mp m = mp >>= \v -> when v m
+          loop = whenM (hSkipBytes hdl 8 pTheirTimestamp) $ do
+                   ts <- preciseTimeSpec
+                   let pOurTimestamp = repack $ runPut $ putWord64le (toNanos64 ts)
+                   unsafeUseAsCString pOurTimestamp $ \ptr -> hPutBuf hdl ptr 8
+                   -- putStrLn "Calibration - next loop iteration passed"
+                   loop
+      loop
   putStrLn "Calibration ended - sleeping"
 
 state :: TVar GregState
@@ -219,68 +209,6 @@ hSkipBytes h n p = do
 
 repack :: L.ByteString -> B.ByteString
 repack = B.concat . L.toChunks
-
-
-------------------------------------------------------------------------
--- Unchecked shifts
-
-{-# INLINE shiftr_w16 #-}
-shiftr_w16 :: Word16 -> Int -> Word16
-{-# INLINE shiftr_w32 #-}
-shiftr_w32 :: Word32 -> Int -> Word32
-{-# INLINE shiftr_w64 #-}
-shiftr_w64 :: Word64 -> Int -> Word64
-
-#if defined(__GLASGOW_HASKELL__) && !defined(__HADDOCK__)
-shiftr_w16 (W16# w) (I# i) = W16# (w `uncheckedShiftRL#`   i)
-shiftr_w32 (W32# w) (I# i) = W32# (w `uncheckedShiftRL#`   i)
-
-#if WORD_SIZE_IN_BITS < 64
-shiftr_w64 (W64# w) (I# i) = W64# (w `uncheckedShiftRL64#` i)
-
-#if __GLASGOW_HASKELL__ <= 606
--- Exported by GHC.Word in GHC 6.8 and higher
-foreign import ccall unsafe "stg_uncheckedShiftRL64"
-    uncheckedShiftRL64#     :: Word64# -> Int# -> Word64#
-#endif
-
-#else
-shiftr_w64 (W64# w) (I# i) = W64# (w `uncheckedShiftRL#` i)
-#endif
-
-#else
-shiftr_w16 = shiftR
-shiftr_w32 = shiftR
-shiftr_w64 = shiftR
-#endif
-
--- | Write a 'Word64' in little endian format.
-writeWord64le :: Word64 -> Ptr Word8 -> IO ()
-
-#if WORD_SIZE_IN_BITS < 64
-writeWord64le w p = do
-    let b = fromIntegral (shiftr_w64 w 32) :: Word32
-        a = fromIntegral w                 :: Word32
-    poke (p)             (fromIntegral (a)               :: Word8)
-    poke (p `plusPtr` 1) (fromIntegral (shiftr_w32 a  8) :: Word8)
-    poke (p `plusPtr` 2) (fromIntegral (shiftr_w32 a 16) :: Word8)
-    poke (p `plusPtr` 3) (fromIntegral (shiftr_w32 a 24) :: Word8)
-    poke (p `plusPtr` 4) (fromIntegral (b)               :: Word8)
-    poke (p `plusPtr` 5) (fromIntegral (shiftr_w32 b  8) :: Word8)
-    poke (p `plusPtr` 6) (fromIntegral (shiftr_w32 b 16) :: Word8)
-    poke (p `plusPtr` 7) (fromIntegral (shiftr_w32 b 24) :: Word8)
-#else
-writeWord64le w p = do
-    poke p               (fromIntegral (w)               :: Word8)
-    poke (p `plusPtr` 1) (fromIntegral (shiftr_w64 w  8) :: Word8)
-    poke (p `plusPtr` 2) (fromIntegral (shiftr_w64 w 16) :: Word8)
-    poke (p `plusPtr` 3) (fromIntegral (shiftr_w64 w 24) :: Word8)
-    poke (p `plusPtr` 4) (fromIntegral (shiftr_w64 w 32) :: Word8)
-    poke (p `plusPtr` 5) (fromIntegral (shiftr_w64 w 40) :: Word8)
-    poke (p `plusPtr` 6) (fromIntegral (shiftr_w64 w 48) :: Word8)
-    poke (p `plusPtr` 7) (fromIntegral (shiftr_w64 w 56) :: Word8)
-#endif
-{-# INLINE writeWord64le #-}
 
 atomModTVar var f = atomically $ readTVar var >>= \val -> writeTVar var (f val)
 
