@@ -6,8 +6,7 @@ Messages are stored in TChan
 1 'checking' thread keeps an eye on TChan size, initiates message dropping if necessary.
 1 'sender' thread delivers the batch of messages to the server
 -}
-
-import Prelude hiding (log, getContents)
+module System.Log.Greg (logMessage, withGregDo, defaultConfiguration) where
 
 import System.Log.PreciseClock
 import System.Posix.Clock
@@ -181,14 +180,14 @@ state = unsafePerformIO $ do rs <- newTChanIO
                              pkt <- newEmptyTMVarIO
                              newTVarIO $ GregState defaultConfiguration rs numrs dropping pkt
 
-log :: String -> IO ()
-log s = do
+logMessage :: String -> IO ()
+logMessage s = do
   t <- preciseTimeSpec
-  atomically $ do 
-    st <- readTVar state
-    writeTChan (records st) (Record {timestamp = t, message = B.pack s})
-    numrs <- takeTMVar (numRecords st)
-    putTMVar (numRecords st) (numrs + 1)
+  st <- atomically $ readTVar state
+  shouldDrop <- atomically $ readTVar (isDropping st)
+  unless shouldDrop $ do
+    atomically $ writeTChan (records st) (Record {timestamp = t, message = B.pack s})
+    atomModTVar (numRecords st) (+1)
 
 --------------------------------------------------------------------------
 -- Utilities
@@ -269,6 +268,9 @@ writeWord64le w p = do
 #endif
 {-# INLINE writeWord64le #-}
 
+atomModTVar var f = atomically $ readTVar var >>= \val -> writeTVar var (f val)
+
+putStrLnT str = traceEvent str >> putStrLn str
 
 main :: IO ()
 main = withGregDo defaultConfiguration $ forever $ log "Hello" >> threadDelay 1000
