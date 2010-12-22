@@ -116,19 +116,22 @@ checkQueueSize st = do
 
 packRecordsOnce :: GregState -> IO ()
 packRecordsOnce st = do
-  atomically $ do rs <- readAll
-                  if null rs then retry
-                    else do -- putting messages in the outbox
-                            putTMVar (packet st) rs
-                            -- decreasing queue size
-                            numrs <- takeTMVar (numRecords st)
-                            putTMVar (numRecords st) (numrs - (length rs))
+  putStrLn $ "Packing: reading all messages ..."
+  rs <- readAllMessages
+  putStrLn $ "Packing: reading all messages done (" ++ show (length rs) ++ ")"
+  unless (null rs) $ do
+    putStrLn $ "Packing " ++ show (length rs) ++ " records"
+    atomModTVar (numRecords st) (\x -> x - length rs) -- decrease queue length
+    atomically $ do senderAccepted <- tryPutTMVar (packet st) rs -- putting messages in the outbox
+                    unless senderAccepted retry 
+    putStrLn "Packing done"
   where
-    readAll = do empty <- isEmptyTChan (records st)
-                 if empty then return []
-                   else do r <- readTChan (records st)
-                           rest <- readAll
-                           return (r:rest)
+    readAllMessages = do 
+      empty <- atomically $ isEmptyTChan (records st)
+      if empty then return []
+        else do r <- atomically $ readTChan (records st)
+                rest <- readAllMessages
+                return (r:rest)
 
 sendPacketOnce :: GregState -> IO ()
 sendPacketOnce st = do
