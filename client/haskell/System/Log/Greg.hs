@@ -1,12 +1,10 @@
 {-# LANGUAGE CPP, MagicHash #-}
-module System.Log.Greg (log, withGregDo) where
-
-{-
-Idea:
-Messages are stored in Chan/TChan
-1 thread performs calibration and controls socket
-1 'keeper' thread takes messages from tchan and offloads them to sender thread(s). Also, keeps tchan size in check, and controls socket
-1 'sender' delivers the batch of messages to the server
+{-|
+Messages are stored in TChan
+1 thread performs calibration
+1 'packer' thread takes messages from tchan and offloads them to sender thread(s).
+1 'checking' thread keeps an eye on TChan size, initiates message dropping if necessary.
+1 'sender' thread delivers the batch of messages to the server
 -}
 
 import Prelude hiding (log, getContents)
