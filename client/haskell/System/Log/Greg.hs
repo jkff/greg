@@ -1,4 +1,3 @@
-{-# LANGUAGE CPP, MagicHash #-}
 {-|
 Messages are stored in TChan
 1 thread performs calibration
@@ -24,8 +23,6 @@ import System.UUID.V4
 
 import System.IO
 import Foreign
-
-import GHC.Word (Word32(..),Word16(..),Word64(..))
 
 import Control.Exception
 import Control.Concurrent
