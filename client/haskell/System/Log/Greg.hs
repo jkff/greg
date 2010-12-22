@@ -49,9 +49,10 @@ data Record = Record {
 
 data GregState = GregState { 
         configuration :: Configuration,
-        records :: TChan Record,
-        numRecords :: TMVar Int,
-        packet :: TMVar [Record]
+        records :: TChan Record, -- FIFO for queued Records
+        numRecords :: TVar Int, -- How many records are in FIFO
+        isDropping :: TVar Bool, -- True is we are not adding records to the FIFO since there are more than 'maxBufferedRecords' of them
+        packet :: TMVar [Record] -- Block of records we are currently trying to send
     }
 
 data Configuration = Configuration {
@@ -81,13 +82,6 @@ defaultConfiguration = Configuration {
         calibrationPeriodSec = 10
     }
 
-{- TODO:
-makeBuf (maxBufferedRecords conf) 
-                     (\de -> case de of
-                        Started     -> putStrLn "Started dropping"
-                        Stopped   t -> putStrLn ("Stopped dropping, dropped " ++ show t)
-                        Continued t -> putStrLn ("Still dropping, dropped " ++ show t))
-  -}
 withGregDo :: Configuration -> IO () -> IO ()
 withGregDo conf realMain = withSocketsDo $ do
   st <- atomically $ do st <- readTVar state
@@ -98,32 +92,25 @@ withGregDo conf realMain = withSocketsDo $ do
   forkIO $ forever (packRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
 
   -- Housekeeping thread that keeps queue size at check
-  forkIO $ forever (trimRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
-
-  -- Calibration thread
-  forkIO $ forever (initiateCalibrationOnce st >> threadDelay (1000000*calibrationPeriodSec conf))
+  forkIO $ forever (checkQueueSize          st >> threadDelay (1000*flushPeriodMs conf))
 
   -- Sender thread
   forkIO $ forever (pushRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
 
   realMain
 
-trimRecordsOnce :: GregState -> IO ()
-trimRecordsOnce st = do
-  currsize <- atomically $ readTMVar (numRecords st)
+checkQueueSize :: GregState -> IO ()
+checkQueueSize st = do
+  currsize <- atomically $ readTVar (numRecords st)
   let maxrs = maxBufferedRecords (configuration st)
-  when (currsize > maxrs) $ do
-    numdropped <- atomically $ do
-      numrs <- takeTMVar (numRecords st)
-      let toDrop = numrs - maxrs
-      drop toDrop
-      putTMVar (numRecords st) (numrs - toDrop)
-      return toDrop
-    putStrLn ("Dropped " ++ show numdropped ++ " messages")
-  where
-    drop 0 = return ()
-    drop n = do _ <- readTChan (records st)
-                drop (n-1)
+  droppingNow <- atomically $ readTVar (isDropping st)
+  case (droppingNow, currsize > maxrs) of
+    (True , True) -> putStrLnT ("Still dropping (queue " ++ show currsize ++ ")")
+    (False, True) -> do putStrLnT ("Started to drop (queue " ++ show currsize ++ ")")
+                        atomically $ writeTVar (isDropping st) True
+    (True, False) -> do putStrLnT ("Stopped dropping (queue " ++ show currsize ++ ")")
+                        atomically $ writeTVar (isDropping st) False
+    (False, False) -> return () -- everything is OK
 
 packRecordsOnce :: GregState -> IO ()
 packRecordsOnce st = do
@@ -189,9 +176,10 @@ initiateCalibrationOnce st = do
 
 state :: TVar GregState
 state = unsafePerformIO $ do rs <- newTChanIO
-                             numrs <- newTMVarIO 0
+                             numrs <- newTVarIO 0
+                             dropping <- newTVarIO False
                              pkt <- newEmptyTMVarIO
-                             newTVarIO $ GregState defaultConfiguration rs numrs pkt
+                             newTVarIO $ GregState defaultConfiguration rs numrs dropping pkt
 
 log :: String -> IO ()
 log s = do
