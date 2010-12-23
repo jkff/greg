@@ -18,11 +18,18 @@ Source-repository head
 flag splitbase
   description: Choose the new smaller, split-up base package.
 
+flag debug
+  description: enable debugging output
+  default: False
+
 library
   if flag(splitbase)
     Build-Depends: base >= 3 && < 5
   else
     Build-Depends: base < 3
+
+  if flag(debug)
+    cpp-options: -DDEBUG
 
   hs-source-dirs: .
   ghc-options: -Wall -fno-warn-name-shadowing -fno-warn-orphans

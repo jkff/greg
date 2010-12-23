@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-|
 Messages are stored in TChan
 1 thread performs calibration
@@ -95,24 +96,24 @@ checkQueueSize st = do
   let maxrs = maxBufferedRecords (configuration st)
   droppingNow <- atomically $ readTVar (isDropping st)
   case (droppingNow, currsize > maxrs) of
-    (True , True) -> putStrLn ("Still dropping (queue " ++ show currsize ++ ")")
-    (False, True) -> do putStrLn ("Started to drop (queue " ++ show currsize ++ ")")
+    (True , True) -> putStrLnT ("Still dropping (queue " ++ show currsize ++ ")")
+    (False, True) -> do putStrLnT ("Started to drop (queue " ++ show currsize ++ ")")
                         atomically $ writeTVar (isDropping st) True
-    (True, False) -> do putStrLn ("Stopped dropping (queue " ++ show currsize ++ ")")
+    (True, False) -> do putStrLnT ("Stopped dropping (queue " ++ show currsize ++ ")")
                         atomically $ writeTVar (isDropping st) False
     (False, False) -> return () -- everything is OK
 
 packRecordsOnce :: GregState -> IO ()
 packRecordsOnce st = do
-  putStrLn $ "Packing: reading all messages ..."
+  putStrLnT $ "Packing: reading all messages ..."
   rs <- readAllMessages
-  putStrLn $ "Packing: reading all messages done (" ++ show (length rs) ++ ")"
+  putStrLnT $ "Packing: reading all messages done (" ++ show (length rs) ++ ")"
   unless (null rs) $ do
-    putStrLn $ "Packing " ++ show (length rs) ++ " records"
+    putStrLnT $ "Packing " ++ show (length rs) ++ " records"
     atomModTVar (numRecords st) (\x -> x - length rs) -- decrease queue length
     atomically $ do senderAccepted <- tryPutTMVar (packet st) rs -- putting messages in the outbox
                     unless senderAccepted retry 
-    putStrLn "Packing done"
+    putStrLnT "Packing done"
   where
     readAllMessages = do 
       empty <- atomically $ isEmptyTChan (records st)
@@ -125,14 +126,14 @@ sendPacketOnce :: GregState -> IO ()
 sendPacketOnce st = do
   rs <- atomically $ takeTMVar $ packet st
   let conf = configuration st
-  putStrLn "Pushing records"
+  putStrLnT "Pushing records"
   bracket (connectTo (server conf) (PortNumber $ fromIntegral $ port conf)) hClose $ \hdl -> do
-    putStrLn "Pushing records - connected"
+    putStrLnT "Pushing records - connected"
     let msg = formatRecords (configuration st) rs
-    putStrLn $ "Snapshotted " ++ show (length rs) ++ " records --> " ++ show (B.length msg) ++ " bytes"
+    putStrLnT $ "Snapshotted " ++ show (length rs) ++ " records --> " ++ show (B.length msg) ++ " bytes"
     unsafeUseAsCStringLen msg $ \(ptr, len) -> hPutBuf hdl ptr len
     hFlush hdl
-  putStrLn $ "Pushing records - done"
+  putStrLnT $ "Pushing records - done"
 
 formatRecords :: Configuration -> [Record] -> B.ByteString
 formatRecords conf records = repack . runPut $ do
@@ -154,11 +155,11 @@ putRecord r = do
 
 initiateCalibrationOnce :: GregState -> IO ()
 initiateCalibrationOnce st = do
-  putStrLn "Initiating calibration"
+  putStrLnT "Initiating calibration"
   let conf = configuration st
   bracket (connectTo (server conf) (PortNumber $ fromIntegral $ calibrationPort conf)) hClose $ \hdl -> do
     hSetBuffering hdl NoBuffering
-    putStrLn "Calibration - connected"
+    putStrLnT "Calibration - connected"
     unsafeUseAsCString ourUuid $ \p -> hPutBuf hdl p 16
     allocaBytes 8 $ \pTheirTimestamp -> do
       let whenM mp m = mp >>= \v -> when v m
@@ -166,10 +167,10 @@ initiateCalibrationOnce st = do
                    ts <- preciseTimeSpec
                    let pOurTimestamp = repack $ runPut $ putWord64le (toNanos64 ts)
                    unsafeUseAsCString pOurTimestamp $ \ptr -> hPutBuf hdl ptr 8
-                   -- putStrLn "Calibration - next loop iteration passed"
+                   -- putStrLnT "Calibration - next loop iteration passed"
                    loop
       loop
-  putStrLn "Calibration ended - sleeping"
+  putStrLnT "Calibration ended - sleeping"
 
 state :: TVar GregState
 state = unsafePerformIO $ do rs <- newTChanIO
@@ -208,6 +209,12 @@ repack :: L.ByteString -> B.ByteString
 repack = B.concat . L.toChunks
 
 atomModTVar var f = atomically $ readTVar var >>= \val -> writeTVar var (f val)
+
+#ifdef DEBUG
+putStrLnT = putStrLn
+#else
+putStrLnT _ = return ()
+#endif
 
 main :: IO ()
 main = withGregDo defaultConfiguration $ forever $ logMessage "Hello" -- >> threadDelay 1000
