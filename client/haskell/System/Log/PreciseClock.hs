@@ -24,7 +24,11 @@ preciseTimeSpec = do
   TimeSpec ms mns <- getTime Monotonic
   let (TimeSpec rts0 rtns0) = seedRealtime
   let (TimeSpec ms0  mns0)  = seedMonotonic
-  return $ TimeSpec (rts0 + ms - ms0) (rtns0 + mns - mns0)
+  return $ normalize $ TimeSpec (rts0 + ms - ms0) (rtns0 + mns - mns0)
+
+normalize ts@(TimeSpec s ns) | ns < 0 = normalize (TimeSpec (s-1) (ns+1000000000))
+                             | ns > 1000000000 = normalize (TimeSpec (s+1) (ns-1000000000))
+                             | otherwise = ts
 
 preciseTimestamp :: IO UTCTime
 preciseTimestamp = clock2utc `fmap` preciseTimeSpec
