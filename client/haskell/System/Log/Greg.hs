@@ -77,18 +77,38 @@ withGregDo conf realMain = withSocketsDo $ do
                         writeTVar state $ st'
                         return st'
   -- Calibration thread
-  forkIO $ forever (initiateCalibrationOnce st >> threadDelay (1000000*calibrationPeriodSec conf))
+  calTID   <- forkIO $ forever (initiateCalibrationOnce st >> threadDelay (1000000*calibrationPeriodSec conf))
 
   -- Packer thread that offloads records to sender thread
-  forkIO $ forever (packRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
+  packTID  <- forkIO $ forever (packRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
 
   -- Housekeeping thread that keeps queue size at check
-  forkIO $ forever (checkQueueSize          st >> threadDelay (1000*flushPeriodMs conf))
+  checkTID <- forkIO $ forever (checkQueueSize          st >> threadDelay (1000*flushPeriodMs conf))
 
   -- Sender thread
-  forkIO $ forever (sendPacketOnce          st >> threadDelay (1000*flushPeriodMs conf))
+  sendTID  <- forkIO $ forever (sendPacketOnce          st >> threadDelay (1000*flushPeriodMs conf))
 
   realMain
+  putStrLnT "Flushing remaining messages"
+  
+  -- Shutdown. For now, just wait untill all messages are out of the queue
+  -- 1. Stop reception of new messages
+  killThread checkTID
+  atomically $ writeTVar (isDropping st) True
+  -- 2. Wait until all messages are sent
+  let waitFlush = do
+        numrs <- atomically $ readTVar (numRecords st)
+        unless (numrs == 0) $ threadDelay (1000*flushPeriodMs conf) >> waitFlush
+  waitFlush
+  killThread packTID
+  atomically $ putTMVar (packet st) []
+  let waitSend = do
+        sent <- atomically $ isEmptyTMVar (packet st)
+        unless sent $ threadDelay (1000*flushPeriodMs conf) >> waitSend
+  waitSend
+  killThread sendTID
+  killThread calTID
+  putStrLnT "Shutdown finished."
 
 checkQueueSize :: GregState -> IO ()
 checkQueueSize st = do
@@ -125,15 +145,16 @@ packRecordsOnce st = do
 sendPacketOnce :: GregState -> IO ()
 sendPacketOnce st = do
   rs <- atomically $ takeTMVar $ packet st
-  let conf = configuration st
-  putStrLnT "Pushing records"
-  bracket (connectTo (server conf) (PortNumber $ fromIntegral $ port conf)) hClose $ \hdl -> do
-    putStrLnT "Pushing records - connected"
-    let msg = formatRecords (configuration st) rs
-    putStrLnT $ "Snapshotted " ++ show (length rs) ++ " records --> " ++ show (B.length msg) ++ " bytes"
-    unsafeUseAsCStringLen msg $ \(ptr, len) -> hPutBuf hdl ptr len
-    hFlush hdl
-  putStrLnT $ "Pushing records - done"
+  unless (null rs) $ do
+    let conf = configuration st
+    putStrLnT "Pushing records"
+    bracket (connectTo (server conf) (PortNumber $ fromIntegral $ port conf)) hClose $ \hdl -> do
+      putStrLnT "Pushing records - connected"
+      let msg = formatRecords (configuration st) rs
+      putStrLnT $ "Snapshotted " ++ show (length rs) ++ " records --> " ++ show (B.length msg) ++ " bytes"
+      unsafeUseAsCStringLen msg $ \(ptr, len) -> hPutBuf hdl ptr len
+      hFlush hdl
+    putStrLnT $ "Pushing records - done"
 
 formatRecords :: Configuration -> [Record] -> B.ByteString
 formatRecords conf records = repack . runPut $ do
