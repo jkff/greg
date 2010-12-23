@@ -126,7 +126,7 @@ checkQueueSize st = do
 packRecordsOnce :: GregState -> IO ()
 packRecordsOnce st = do
   putStrLnT $ "Packing: reading all messages ..."
-  rs <- readAllMessages
+  rs <- readAtMost 10000 -- Mandated by protocol
   putStrLnT $ "Packing: reading all messages done (" ++ show (length rs) ++ ")"
   unless (null rs) $ do
     putStrLnT $ "Packing " ++ show (length rs) ++ " records"
@@ -135,11 +135,12 @@ packRecordsOnce st = do
                     unless senderAccepted retry 
     putStrLnT "Packing done"
   where
-    readAllMessages = do 
+    readAtMost 0 = return []
+    readAtMost n = do 
       empty <- atomically $ isEmptyTChan (records st)
       if empty then return []
         else do r <- atomically $ readTChan (records st)
-                rest <- readAllMessages
+                rest <- readAtMost (n-1)
                 return (r:rest)
 
 sendPacketOnce :: GregState -> IO ()
