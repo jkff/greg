@@ -213,7 +213,7 @@ logMessage s = do
 -- Utilities
 
 toNanos64 :: TimeSpec -> Word64
-toNanos64 (TimeSpec s ns) = fromIntegral (ns + 1000000000*s)
+toNanos64 (TimeSpec s ns) = fromIntegral ns + 1000000000*fromIntegral s
 
 hSkipBytes :: Handle -> Int -> Ptr a -> IO Bool
 hSkipBytes _ 0 _ = return True
