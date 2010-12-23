@@ -34,6 +34,6 @@ library
   hs-source-dirs: .
   ghc-options: -Wall -fno-warn-name-shadowing -fno-warn-orphans
   Build-Depends: bytestring, time, binary,  
-                 system-uuid, hostname, network >= 2.3, clock >= 0.1.2.1, stm
+                 system-uuid, hostname, network < 2.3, clock >= 0.1.2.1, stm
   Exposed-Modules: System.Log.Greg
   Other-Modules: System.Log.PreciseClock

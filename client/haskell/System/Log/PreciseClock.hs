@@ -2,12 +2,12 @@ module System.Log.PreciseClock (preciseTimeSpec, preciseTimestamp) where
 
 import System.Posix.Clock
 import Data.Time.Clock
-import Data.Time.Calendar
-import Data.Time.Format
 
 import Control.Monad
 import System.IO.Unsafe
 
+seedRealtime :: TimeSpec
+seedMonotonic :: TimeSpec
 (seedRealtime, seedMonotonic) = unsafePerformIO $ liftM2 (,) (getTime Realtime) (getTime Monotonic)
 
 epochStart :: UTCTime
@@ -26,9 +26,14 @@ preciseTimeSpec = do
   let (TimeSpec ms0  mns0)  = seedMonotonic
   return $ normalize $ TimeSpec (rts0 + ms - ms0) (rtns0 + mns - mns0)
 
-normalize ts@(TimeSpec s ns) | ns < 0 = normalize (TimeSpec (s-1) (ns+1000000000))
-                             | ns > 1000000000 = normalize (TimeSpec (s+1) (ns-1000000000))
-                             | otherwise = ts
+nanosInSec :: (Integral a) => a
+nanosInSec = 1000000000
+
+normalize :: TimeSpec -> TimeSpec
+normalize ts@(TimeSpec s ns) 
+  | ns < 0          = normalize (TimeSpec (s-1) (ns+nanosInSec))
+  | ns > nanosInSec = normalize (TimeSpec (s+1) (ns-nanosInSec))
+  | otherwise       = ts
 
 preciseTimestamp :: IO UTCTime
 preciseTimestamp = clock2utc `fmap` preciseTimeSpec

@@ -6,7 +6,12 @@ Messages are stored in TChan
 1 'checking' thread keeps an eye on TChan size, initiates message dropping if necessary.
 1 'sender' thread delivers the batch of messages to the server
 -}
-module System.Log.Greg (logMessage, withGregDo, defaultConfiguration) where
+module System.Log.Greg (
+    Configuration(..)
+   ,logMessage
+   ,withGregDo
+   ,defaultConfiguration
+   ) where
 
 import System.Log.PreciseClock
 import System.Posix.Clock
@@ -126,7 +131,7 @@ checkQueueSize st = do
 packRecordsOnce :: GregState -> IO ()
 packRecordsOnce st = do
   putStrLnT $ "Packing: reading all messages ..."
-  rs <- readAtMost 10000 -- Mandated by protocol
+  rs <- readAtMost (10000::Int) -- Mandated by protocol
   putStrLnT $ "Packing: reading all messages done (" ++ show (length rs) ++ ")"
   unless (null rs) $ do
     putStrLnT $ "Packing " ++ show (length rs) ++ " records"
@@ -230,13 +235,17 @@ hSkipBytes h n p = do
 repack :: L.ByteString -> B.ByteString
 repack = B.concat . L.toChunks
 
+atomModTVar :: TVar a -> (a -> a) -> IO ()
 atomModTVar var f = atomically $ readTVar var >>= \val -> writeTVar var (f val)
 
+putStrLnT :: String -> IO ()
 #ifdef DEBUG
 putStrLnT = putStrLn
 #else
 putStrLnT _ = return ()
 #endif
 
+#ifdef SELFTEST
 main :: IO ()
 main = withGregDo defaultConfiguration $ forever $ logMessage "Hello" -- >> threadDelay 1000
+#endif
