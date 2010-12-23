@@ -30,9 +30,14 @@ import System.UUID.V4
 import System.IO
 import Foreign
 
-import Control.Exception
+#ifdef DEBUG
+import Debug.Trace
+#endif
+
+import qualified Control.Exception as E
 import Control.Concurrent
 import Control.Concurrent.STM
+import GHC.Conc
 import Control.Monad
 
 data Record = Record {
@@ -81,17 +86,17 @@ withGregDo conf realMain = withSocketsDo $ do
                         let st' = st{configuration = conf}
                         writeTVar state $ st'
                         return st'
-  -- Calibration thread
-  calTID   <- forkIO $ forever (initiateCalibrationOnce st >> threadDelay (1000000*calibrationPeriodSec conf))
+  
+  let everyMs ms action = forkIO $ forever (action >> threadDelay (1000 * ms))
+  let safely action label = action `E.catch` \e -> putStrLnT ("Error in " ++ label ++ ": " ++ show (e::E.SomeException))
+  let safelyEveryMs ms action label = everyMs ms (safely action label)
 
-  -- Packer thread that offloads records to sender thread
-  packTID  <- forkIO $ forever (packRecordsOnce         st >> threadDelay (1000*flushPeriodMs conf))
-
-  -- Housekeeping thread that keeps queue size at check
-  checkTID <- forkIO $ forever (checkQueueSize          st >> threadDelay (1000*flushPeriodMs conf))
-
-  -- Sender thread
-  sendTID  <- forkIO $ forever (sendPacketOnce          st >> threadDelay (1000*flushPeriodMs conf))
+  -- Packer thread offloads records to sender thread
+  -- Housekeeping thread keeps queue size at check
+  calTID   <- safelyEveryMs (1000*calibrationPeriodSec conf) (initiateCalibrationOnce st) "calibrator"
+  packTID  <- safelyEveryMs (            flushPeriodMs conf) (packRecordsOnce         st) "packer"
+  checkTID <- safelyEveryMs (            flushPeriodMs conf) (checkQueueSize          st) "queue size checker"
+  sendTID  <- safelyEveryMs (            flushPeriodMs conf) (sendPacketOnce          st) "queue size checker"
 
   realMain
   putStrLnT "Flushing remaining messages"
@@ -129,38 +134,41 @@ checkQueueSize st = do
     (False, False) -> return () -- everything is OK
 
 packRecordsOnce :: GregState -> IO ()
-packRecordsOnce st = do
+packRecordsOnce st = atomically $ do
   putStrLnT $ "Packing: reading all messages ..."
   rs <- readAtMost (10000::Int) -- Mandated by protocol
   putStrLnT $ "Packing: reading all messages done (" ++ show (length rs) ++ ")"
   unless (null rs) $ do
     putStrLnT $ "Packing " ++ show (length rs) ++ " records"
     atomModTVar (numRecords st) (\x -> x - length rs) -- decrease queue length
-    atomically $ do senderAccepted <- tryPutTMVar (packet st) rs -- putting messages in the outbox
-                    unless senderAccepted retry 
+    senderAccepted <- tryPutTMVar (packet st) rs -- putting messages in the outbox
+    unless senderAccepted retry 
     putStrLnT "Packing done"
   where
     readAtMost 0 = return []
     readAtMost n = do 
-      empty <- atomically $ isEmptyTChan (records st)
+      empty <- isEmptyTChan (records st)
       if empty then return []
-        else do r <- atomically $ readTChan (records st)
+        else do r <- readTChan (records st)
                 rest <- readAtMost (n-1)
                 return (r:rest)
 
 sendPacketOnce :: GregState -> IO ()
-sendPacketOnce st = do
-  rs <- atomically $ takeTMVar $ packet st
+sendPacketOnce st = atomically $ withWarning "Failed to pack/send records" $ do
+  rs <- takeTMVar $ packet st
   unless (null rs) $ do
     let conf = configuration st
     putStrLnT "Pushing records"
-    bracket (connectTo (server conf) (PortNumber $ fromIntegral $ port conf)) hClose $ \hdl -> do
+    unsafeIOToSTM $ E.bracket (connectTo (server conf) (PortNumber $ fromIntegral $ port conf)) hClose $ \hdl -> do
       putStrLnT "Pushing records - connected"
       let msg = formatRecords (configuration st) rs
       putStrLnT $ "Snapshotted " ++ show (length rs) ++ " records --> " ++ show (B.length msg) ++ " bytes"
       unsafeUseAsCStringLen msg $ \(ptr, len) -> hPutBuf hdl ptr len
       hFlush hdl
     putStrLnT $ "Pushing records - done"
+  where
+    withWarning s t = (t `catchSTM` (\e -> putStrLnT (s ++ ": " ++ show e) >> check False)) `orElse` return ()
+   
 
 formatRecords :: Configuration -> [Record] -> B.ByteString
 formatRecords conf records = repack . runPut $ do
@@ -184,7 +192,7 @@ initiateCalibrationOnce :: GregState -> IO ()
 initiateCalibrationOnce st = do
   putStrLnT "Initiating calibration"
   let conf = configuration st
-  bracket (connectTo (server conf) (PortNumber $ fromIntegral $ calibrationPort conf)) hClose $ \hdl -> do
+  E.bracket (connectTo (server conf) (PortNumber $ fromIntegral $ calibrationPort conf)) hClose $ \hdl -> do
     hSetBuffering hdl NoBuffering
     putStrLnT "Calibration - connected"
     unsafeUseAsCString ourUuid $ \p -> hPutBuf hdl p 16
@@ -211,8 +219,8 @@ logMessage s = do
   t <- preciseTimeSpec
   st <- atomically $ readTVar state
   shouldDrop <- atomically $ readTVar (isDropping st)
-  unless shouldDrop $ do
-    atomically $ writeTChan (records st) (Record {timestamp = t, message = B.pack s})
+  unless shouldDrop $ atomically $ do
+    writeTChan (records st) (Record {timestamp = t, message = B.pack s})
     atomModTVar (numRecords st) (+1)
 
 --------------------------------------------------------------------------
@@ -235,17 +243,17 @@ hSkipBytes h n p = do
 repack :: L.ByteString -> B.ByteString
 repack = B.concat . L.toChunks
 
-atomModTVar :: TVar a -> (a -> a) -> IO ()
-atomModTVar var f = atomically $ readTVar var >>= \val -> writeTVar var (f val)
+atomModTVar :: TVar a -> (a -> a) -> STM ()
+atomModTVar var f = readTVar var >>= \val -> writeTVar var (f val)
 
-putStrLnT :: String -> IO ()
 #ifdef DEBUG
-putStrLnT = putStrLn
+putStrLnT s = trace s $ return ()
 #else
 putStrLnT _ = return ()
 #endif
 
-#ifdef SELFTEST
-main :: IO ()
-main = withGregDo defaultConfiguration $ forever $ logMessage "Hello" -- >> threadDelay 1000
-#endif
+testFlood :: IO ()
+testFlood = withGregDo defaultConfiguration $ forever $ logMessage "Hello" -- >> threadDelay 1000
+
+testSequence :: IO ()
+testSequence = withGregDo defaultConfiguration $ mapM_ (\x -> logMessage (show x) >> threadDelay 100000) [1..]
