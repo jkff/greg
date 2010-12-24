@@ -2,21 +2,18 @@ Name: greg-client
 Version: 1.0.0
 License: BSD3
 License-file: LICENSE
-Copyright: Eugene Kirpichov, 2010
-Author: Eugene Kirpichov <ekirpichov@gmail.com>
-Maintainer: Eugene Kirpichov <ekirpichov@gmail.com>
+Copyright: Eugene Kirpichov, Dmitry Astapov 2010
+Author: Eugene Kirpichov <ekirpichov@gmail.com>, Dmitry Astapov <dastapov@gmail.com>
+Maintainer: Eugene Kirpichov <ekirpichov@gmail.com>, Dmitry Astapov <dastapov@gmail.com>
 Synopsis: A scalable distributed logger with a high-precision global time axis.
-Description: Haskell client to the "greg" logger (http://code.google.com/p/greg/).
+Description: Haskell client to the "greg" distributed logger with a high-precision global time axis (http://code.google.com/p/greg/).
 Category: Logging
 Cabal-Version: >= 1.6
 Build-Type: Simple
 Homepage: http://code.google.com/p/greg/
 Source-repository head
-  type: hg
-  location: https://greg.googlecode.com/hg/
-
-flag splitbase
-  description: Choose the new smaller, split-up base package.
+  type: git
+  location: git://github.com/jkff/greg.git
 
 flag debug
   description: enable debugging output
