@@ -1,11 +1,21 @@
 {-# LANGUAGE CPP #-}
-{-|
-Messages are stored in TChan
-1 thread performs calibration
-1 'packer' thread takes messages from tchan and offloads them to sender thread(s).
-1 'checking' thread keeps an eye on TChan size, initiates message dropping if necessary.
-1 'sender' thread delivers the batch of messages to the server
--}
+-------------------------------------------------------------------------------
+-- |
+-- Copyright        :   (c) 2010 Eugene Kirpichov, Dmitry Astapov
+-- License          :   BSD3
+-- 
+-- Maintainer       :   Eugene Kirpichov <ekirpichov@gmail.com>, 
+--                      Dmitry Astapov <dastapov@gmail.com>
+-- Stability        :   experimental
+-- Portability      :   GHC only (STM, GHC.Conc for unsafeIOToSTM)
+-- 
+-- This module provides a binding to the greg distributed logger,
+-- which provides a high-precision global time axis and is very performant.
+-- 
+-- See project home page at <http://code.google.com/p/greg> for an explanation
+-- of how to use the server, the features, motivation and design.
+--
+
 module System.Log.Greg (
     Configuration(..)
    ,logMessage
@@ -40,6 +50,14 @@ import Control.Concurrent.STM
 import GHC.Conc
 import Control.Monad
 
+{-
+Messages are stored in TChan
+1 thread performs calibration
+1 'packer' thread takes messages from tchan and offloads them to sender thread(s).
+1 'checking' thread keeps an eye on TChan size, initiates message dropping if necessary.
+1 'sender' thread delivers the batch of messages to the server
+-}
+
 data Record = Record {
         timestamp :: TimeSpec,
         message :: B.ByteString
@@ -53,21 +71,30 @@ data GregState = GregState {
         packet :: TMVar [Record] -- Block of records we are currently trying to send
     }
 
+-- | Client configuration.
+-- You probably only need to change @server@.
 data Configuration = Configuration {
-        server :: String,
-        port :: Int,
-        calibrationPort :: Int,
-        flushPeriodMs :: Int,
-        clientId :: String,
-        maxBufferedRecords :: Int,
-        useCompression :: Bool,
-        calibrationPeriodSec :: Int
+        server                  :: String   -- ^ Server hostname (default @localhost@)
+       ,port                    :: Int      -- ^ Message port (default @5676@)
+       ,calibrationPort         :: Int      -- ^ Calibration port (default @5677@)
+       ,flushPeriodMs           :: Int      -- ^ How often to send message batches to server 
+                                            --   (default @1000@)
+       ,clientId                :: String   -- ^ Arbitrary identifier, will show up in logs.
+                                            --   For example, @\"DataService\"@ 
+                                            --   (default @\"unknown\"@)
+       ,maxBufferedRecords      :: Int      -- ^ How many records to store between flushes
+                                            --   (more will be dropped) (default @100000@)
+       ,useCompression          :: Bool     -- ^ Whether to use gzip compression 
+                                            --   (default @False@, @True@ is unsupported)
+       ,calibrationPeriodSec    :: Int      -- ^ How often to initiate calibration exchanges
+                                            --   (default @10@)
     }
 
 hostname, ourUuid :: B.ByteString
 hostname = B.pack $ unsafePerformIO getHostName
 ourUuid = repack . runPut . put $ unsafePerformIO uuid
 
+-- | The default configuration, suitable for most needs.
 defaultConfiguration :: Configuration
 defaultConfiguration = Configuration {
         server = "localhost",
@@ -80,6 +107,7 @@ defaultConfiguration = Configuration {
         calibrationPeriodSec = 10
     }
 
+-- | Perform an IO action with logging (will wait for all messages to flush).
 withGregDo :: Configuration -> IO () -> IO ()
 withGregDo conf realMain = withSocketsDo $ do
   st <- atomically $ do st <- readTVar state
@@ -96,7 +124,7 @@ withGregDo conf realMain = withSocketsDo $ do
   calTID   <- safelyEveryMs (1000*calibrationPeriodSec conf) (initiateCalibrationOnce st) "calibrator"
   packTID  <- safelyEveryMs (            flushPeriodMs conf) (packRecordsOnce         st) "packer"
   checkTID <- safelyEveryMs (            flushPeriodMs conf) (checkQueueSize          st) "queue size checker"
-  sendTID  <- safelyEveryMs (            flushPeriodMs conf) (sendPacketOnce          st) "queue size checker"
+  sendTID  <- safelyEveryMs (            flushPeriodMs conf) (sendPacketOnce          st) "sender"
 
   realMain
   putStrLnT "Flushing remaining messages"
@@ -213,7 +241,9 @@ state = unsafePerformIO $ do rs <- newTChanIO
                              dropping <- newTVarIO False
                              pkt <- newEmptyTMVarIO
                              newTVarIO $ GregState defaultConfiguration rs numrs dropping pkt
-
+-- | Log a message. The message will show up in server's output
+-- annotated with a global timestamp (client's clock offset does 
+-- not matter).
 logMessage :: String -> IO ()
 logMessage s = do
   t <- preciseTimeSpec

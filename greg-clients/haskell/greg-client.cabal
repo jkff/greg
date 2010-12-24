@@ -6,7 +6,7 @@ Copyright: Eugene Kirpichov, Dmitry Astapov 2010
 Author: Eugene Kirpichov <ekirpichov@gmail.com>, Dmitry Astapov <dastapov@gmail.com>
 Maintainer: Eugene Kirpichov <ekirpichov@gmail.com>, Dmitry Astapov <dastapov@gmail.com>
 Synopsis: A scalable distributed logger with a high-precision global time axis.
-Description: Haskell client to the "greg" distributed logger with a high-precision global time axis (http://code.google.com/p/greg/).
+Description: Haskell client to the \"greg\" distributed logger with a high-precision global time axis (<http://code.google.com/p/greg/>).
 Category: Logging
 Cabal-Version: >= 1.6
 Build-Type: Simple
