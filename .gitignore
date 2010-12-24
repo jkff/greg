@@ -1,0 +1,14 @@
+# use glob syntax.
+syntax: glob
+
+.DS_Store
+
+*~
+*.iml
+*.ipr
+*.iws
+.idea
+**/target
+**/**/target
+build
+classes
