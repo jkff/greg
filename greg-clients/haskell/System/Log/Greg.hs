@@ -246,14 +246,17 @@ repack = B.concat . L.toChunks
 atomModTVar :: TVar a -> (a -> a) -> STM ()
 atomModTVar var f = readTVar var >>= \val -> writeTVar var (f val)
 
+putStrLnT :: (Monad m) => String -> m ()
 #ifdef DEBUG
 putStrLnT s = trace s $ return ()
 #else
 putStrLnT _ = return ()
 #endif
 
+#ifdef DEBUG
 testFlood :: IO ()
 testFlood = withGregDo defaultConfiguration $ forever $ logMessage "Hello" -- >> threadDelay 1000
 
 testSequence :: IO ()
 testSequence = withGregDo defaultConfiguration $ mapM_ (\x -> logMessage (show x) >> threadDelay 100000) [1..]
+#endif

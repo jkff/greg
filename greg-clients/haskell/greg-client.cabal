@@ -1,5 +1,5 @@
 Name: greg-client
-Version: 0.1.0
+Version: 1.0.0
 License: BSD3
 License-file: LICENSE
 Copyright: Eugene Kirpichov, 2010
@@ -23,10 +23,7 @@ flag debug
   default: False
 
 library
-  if flag(splitbase)
-    Build-Depends: base >= 3 && < 5
-  else
-    Build-Depends: base < 3
+  Build-Depends: base >= 4 && < 5
 
   if flag(debug)
     cpp-options: -DDEBUG
