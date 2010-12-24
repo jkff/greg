@@ -7,6 +7,8 @@ syntax: glob
 *.iml
 *.ipr
 *.iws
-.idea/
-**/target/
-build/
+.idea
+**/target
+**/**/target
+build
+classes
