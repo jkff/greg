@@ -21,7 +21,6 @@ public class Greg {
     private static final Configuration config = Configuration.INSTANCE;
 
     private static final UUID OUR_UUID = UUID.randomUUID();
-    private static final String hostname;
 
     static {
         Thread pushMessages = new Thread("GregPushMessages") {
@@ -38,12 +37,6 @@ public class Greg {
         };
         initCalibration.setDaemon(true);
         initCalibration.start();
-
-        try {
-            hostname = InetAddress.getLocalHost().getHostName();
-        } catch (UnknownHostException e) {
-            throw new AssertionError("Can't get localhost?");
-        }
     }
 
     public static void log(String message) {
@@ -145,7 +138,7 @@ public class Greg {
         w.write(cidBytes);
         int recordsWritten = 0;
 
-        byte[] machineBytes = hostname.getBytes("utf-8");
+        byte[] machineBytes = config.getHostname().getBytes("utf-8");
 
         CharsetEncoder enc = Charset.forName("utf-8").newEncoder();
 

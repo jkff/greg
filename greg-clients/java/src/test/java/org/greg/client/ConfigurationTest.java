@@ -13,8 +13,8 @@ import static org.greg.client.Configuration.*;
  * Date: 25.12.10
  */
 public class ConfigurationTest extends TestCase {
-    private String[] keys = {SERVER, PORT, CALIBRATION_PORT, CALIBRATION_PERIOD_SEC, FLUSH_PERIOD_MS,
-                             CLIENT_ID, MAX_BUFFERED_RECORDS, USE_COMPRESSION};
+    private String[] keys = {SERVER, HOST_NAME, PORT, CALIBRATION_PORT, CALIBRATION_PERIOD_SEC, FLUSH_PERIOD_MS,
+            CLIENT_ID, MAX_BUFFERED_RECORDS, USE_COMPRESSION};
 
     public void testPropertiesFiles() throws IOException, IntrospectionException {
         Properties properties = new Properties();
@@ -23,7 +23,10 @@ public class ConfigurationTest extends TestCase {
         Configuration config = Configuration.INSTANCE;
 
         for(String key: keys) {
-            assertEquals(properties.getProperty(key), config.get(key));
+            String value = properties.getProperty(key);
+            if (value != null) {
+                assertEquals(value, config.get(key));
+            }
         }
     }
 }

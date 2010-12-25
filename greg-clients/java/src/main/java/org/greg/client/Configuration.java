@@ -3,10 +3,14 @@ package org.greg.client;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.Enumeration;
 import java.util.Properties;
 
 public class Configuration {
     public static final String SERVER = "greg.server";
+    public static final String HOST_NAME = "greg.hostname";
     public static final String PORT = "greg.port";
     public static final String CALIBRATION_PORT = "greg.port";
     public static final String CALIBRATION_PERIOD_SEC = "greg.calibrationPeriodSec";
@@ -24,6 +28,7 @@ public class Configuration {
     private static final String defaultPropertiesPath = "/greg.properties";
     private Properties properties = new Properties();
     private String server;
+    private String hostname;
     private int port;
     private int calibrationPort;
     private int calibrationPeriodSec;
@@ -34,10 +39,6 @@ public class Configuration {
 
     public Configuration() {
         this(defaultPropertiesPath);
-        if (properties.isEmpty()) {
-            loadDefaultProperties(properties);
-            initialize();
-        }
     }
 
     public Configuration(String path) {
@@ -45,10 +46,10 @@ public class Configuration {
     }
 
     public Configuration(InputStream is) {
+        Properties defaultProperties = new Properties();
         if (is != null) {
             try {
-                properties.load(is);
-                initialize();
+                load(is, defaultProperties);
             } catch (IOException e) {
                 // ignore
             } finally {
@@ -85,6 +86,10 @@ public class Configuration {
         return server;
     }
 
+    public String getHostname() {
+        return hostname;
+    }
+
     public int getPort() {
         return port;
     }
@@ -113,15 +118,11 @@ public class Configuration {
         return useCompression;
     }
 
-    private void initialize() {
-        server = get(SERVER);
-        port = getInt(PORT);
-        calibrationPort = getInt(CALIBRATION_PORT);
-        calibrationPeriodSec = getInt(CALIBRATION_PERIOD_SEC);
-        flushPeriodMs = getInt(FLUSH_PERIOD_MS);
-        clientId = get(CLIENT_ID);
-        maxBufferedRecords = getInt(MAX_BUFFERED_RECORDS);
-        useCompression = getBoolean(USE_COMPRESSION);
+    private void load(InputStream is, Properties defaultProperties) throws IOException {
+        properties.load(is);
+        loadDefaultProperties(defaultProperties);
+        merge(defaultProperties, properties);
+        initialize();
     }
 
     private void loadDefaultProperties(Properties properties) {
@@ -133,6 +134,37 @@ public class Configuration {
         properties.setProperty(CLIENT_ID, "unknown");
         properties.setProperty(MAX_BUFFERED_RECORDS, "1000000");
         properties.setProperty(USE_COMPRESSION, "true");
+        properties.setProperty(HOST_NAME, getHostName());
+    }
+
+    private void merge(Properties defaultProperties, Properties targetProperties) {
+        for(Object key : defaultProperties.keySet()) {
+            if (!targetProperties.containsKey(key)) {
+                targetProperties.setProperty((String) key, defaultProperties.getProperty((String) key));
+            }
+        }
+    }
+
+    private void initialize() {
+        server = get(SERVER);
+        hostname = get(HOST_NAME);
+        port = getInt(PORT);
+        calibrationPort = getInt(CALIBRATION_PORT);
+        calibrationPeriodSec = getInt(CALIBRATION_PERIOD_SEC);
+        flushPeriodMs = getInt(FLUSH_PERIOD_MS);
+        clientId = get(CLIENT_ID);
+        maxBufferedRecords = getInt(MAX_BUFFERED_RECORDS);
+        useCompression = getBoolean(USE_COMPRESSION);
+    }
+
+    private String getHostName() {
+        String hostname;
+        try {
+            hostname = InetAddress.getLocalHost().getHostName();
+        } catch (UnknownHostException e) {
+            throw new AssertionError("Can't get localhost?");
+        }
+        return hostname;
     }
 
     private void close(Closeable is) {
