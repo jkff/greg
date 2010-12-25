@@ -8,7 +8,6 @@ import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
-import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -19,7 +18,7 @@ public class Greg {
     private static final AtomicInteger numDropped = new AtomicInteger(0);
     // Don't use ConcurrentLinkedQueue.size() because it's O(n)
     private static final AtomicInteger numRecords = new AtomicInteger(0);
-    private static final Configuration conf = Configuration.INSTANCE;
+    private static final Configuration config = Configuration.INSTANCE;
 
     private static final UUID OUR_UUID = UUID.randomUUID();
     private static final String hostname;
@@ -48,7 +47,7 @@ public class Greg {
     }
 
     public static void log(String message) {
-        if (numRecords.get() < conf.maxBufferedRecords) {
+        if (numRecords.get() < config.getMaxBufferedRecords()) {
             numRecords.incrementAndGet();
 
             Record r = new Record();
@@ -84,7 +83,7 @@ public class Greg {
             OutputStream stream = null;
 
             try {
-                client = new Socket(conf.server, conf.port);
+                client = new Socket(config.getServer(), config.getPort());
                 Trace.writeLine(
                         "Client connected to " + client.getRemoteSocketAddress() +
                                 " from " + client.getLocalSocketAddress());
@@ -93,9 +92,9 @@ public class Greg {
                 DataOutput w = new LittleEndianDataOutputStream(bStream);
                 w.writeLong(OUR_UUID.getLeastSignificantBits());
                 w.writeLong(OUR_UUID.getMostSignificantBits());
-                w.writeBoolean(conf.useCompression);
+                w.writeBoolean(config.isUseCompression());
 
-                stream = new BufferedOutputStream(conf.useCompression ? new GZIPOutputStream(bStream) : bStream, 65536);
+                stream = new BufferedOutputStream(config.isUseCompression() ? new GZIPOutputStream(bStream) : bStream, 65536);
                 exhausted = writeRecordsBatchTo(stream);
             } catch (Exception e) {
                 Trace.writeLine("Failed to push messages: " + e);
@@ -110,7 +109,7 @@ public class Greg {
             // Only sleep when waiting for new records.
             if (exhausted) {
                 try {
-                    Thread.sleep(conf.flushPeriodMs);
+                    Thread.sleep(config.getFlushPeriodMs());
                 } catch (InterruptedException e) {
                     continue;
                 }
@@ -141,7 +140,7 @@ public class Greg {
     private static boolean writeRecordsBatchTo(OutputStream stream) throws IOException {
         int maxBatchSize = 10000;
         DataOutput w = new LittleEndianDataOutputStream(stream);
-        byte[] cidBytes = conf.clientId.getBytes("utf-8");
+        byte[] cidBytes = config.getClientId().getBytes("utf-8");
         w.writeInt(cidBytes.length);
         w.write(cidBytes);
         int recordsWritten = 0;
@@ -189,7 +188,7 @@ public class Greg {
         while (true) {
             Socket client = null;
             try {
-                client = new Socket(conf.server, conf.calibrationPort);
+                client = new Socket(config.getServer(), config.getCalibrationPort());
                 client.setTcpNoDelay(true);
                 exchangeTicksOver(client.getInputStream(), client.getOutputStream());
             } catch (Exception e) {
@@ -198,7 +197,7 @@ public class Greg {
                 close(client);
             }
             try {
-                Thread.sleep(conf.calibrationPeriodSec * 1000L);
+                Thread.sleep(config.getCalibrationPeriodSec() * 1000L);
             } catch (InterruptedException e) {
                 continue;
             }
