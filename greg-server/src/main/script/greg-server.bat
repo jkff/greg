@@ -1,1 +1,1 @@
-java -jar greg-server.jar
+java -jar greg-server-0.1.jar
