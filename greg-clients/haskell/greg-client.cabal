@@ -1,5 +1,5 @@
 Name: greg-client
-Version: 1.0.0
+Version: 1.0.2
 License: BSD3
 License-file: LICENSE
 Copyright: Eugene Kirpichov, Dmitry Astapov 2010
@@ -28,6 +28,6 @@ library
   hs-source-dirs: .
   ghc-options: -Wall -fno-warn-name-shadowing -fno-warn-orphans
   Build-Depends: bytestring, time, binary,  
-                 system-uuid, hostname, network < 2.3, clock >= 0.1.2.1, stm
+                 system-uuid, hostname, network, clock >= 0.1.2.1, stm
   Exposed-Modules: System.Log.Greg
   Other-Modules: System.Log.PreciseClock

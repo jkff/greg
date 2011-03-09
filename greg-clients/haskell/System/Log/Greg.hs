@@ -195,7 +195,7 @@ sendPacketOnce st = atomically $ withWarning "Failed to pack/send records" $ do
       hFlush hdl
     putStrLnT $ "Pushing records - done"
   where
-    withWarning s t = (t `catchSTM` (\e -> putStrLnT (s ++ ": " ++ show e) >> check False)) `orElse` return ()
+    withWarning s t = (t `catchSTM` (\e -> putStrLnT (s ++ ": " ++ show (e::E.SomeException)) >> check False)) `orElse` return ()
    
 
 formatRecords :: Configuration -> [Record] -> B.ByteString
