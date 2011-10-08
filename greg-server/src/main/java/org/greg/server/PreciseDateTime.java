@@ -39,7 +39,7 @@ public class PreciseDateTime implements Comparable<PreciseDateTime> {
         cal.setTimeInMillis(utcNanos/1000000L);
 
         int y = cal.get(Calendar.YEAR);
-        int m = cal.get(Calendar.MONTH);
+        int m = cal.get(Calendar.MONTH) + 1;
         int d = cal.get(Calendar.DAY_OF_MONTH);
         int hh = cal.get(Calendar.HOUR_OF_DAY);
         int mm = cal.get(Calendar.MINUTE);
