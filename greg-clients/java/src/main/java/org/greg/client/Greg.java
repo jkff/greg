@@ -157,16 +157,18 @@ public class Greg {
             w.writeInt(machineBytes.length);
             w.write(machineBytes);
 
-            int maxLen = rec.message.length() * 2;
+            int maxLen = Math.round(rec.message.length() * enc.maxBytesPerChar() + 1);
             if(maxLen > maxMsg.limit()) {
                 maxMsg = ByteBuffer.allocate(maxLen);
             }
             enc.reset();
             enc.encode(CharBuffer.wrap(rec.message), maxMsg, true);
+            enc.flush(maxMsg);
+            int bytesWritten = maxMsg.position();
             maxMsg.position(0);
 
-            w.writeInt(maxMsg.limit());
-            w.write(maxMsg.array(), maxMsg.arrayOffset(), maxMsg.limit());
+            w.writeInt(bytesWritten);
+            w.write(maxMsg.array(), maxMsg.arrayOffset(), bytesWritten);
 
             if(++recordsWritten == maxBatchSize)
                 break;
