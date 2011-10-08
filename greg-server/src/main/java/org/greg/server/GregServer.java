@@ -1,17 +1,11 @@
 package org.greg.server;
 
-import org.apache.commons.math.MathException;
-import org.apache.commons.math.distribution.TDistributionImpl;
-
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
-import java.nio.charset.Charset;
-import java.nio.charset.CharsetDecoder;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPInputStream;
 
@@ -39,7 +33,6 @@ public class GregServer {
         Configuration conf = new Configuration();
         conf.messagePort = get(args, "port", 5676);
         conf.calibrationPort = get(args, "calibrationPort", 5677);
-        conf.desiredConfidenceLevel = get(args, "confidenceLevel", 0.95);
         conf.desiredConfidenceRangeMs = get(args, "confidenceRangeMs", 1);
         conf.maxCalibrationIters = get(args, "maxCalibrationIters", 100);
         conf.minCalibrationIters = get(args, "minCalibrationIters", 10);
@@ -320,7 +313,6 @@ public class GregServer {
     private void processCalibrationExchange(Socket client, SocketAddress ep) throws IOException {
         InputStream in = client.getInputStream();
         OutputStream out = client.getOutputStream();
-        // http://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#On-line_algorithm
 
         DataOutput w = new LittleEndianDataOutputStream(out);
         DataInput r = new LittleEndianDataInputStream(in);
@@ -335,51 +327,32 @@ public class GregServer {
             r.readLong();
         }
 
-        long mean = 0;
-        long m2 = 0;
+        // The smaller the network roundtrip, the smaller the range of possible
+        // asymmetries of network latencies, the more precisely we compute the
+        // clock difference.
+        long minLatencyNanos = Long.MAX_VALUE;
+        long latenessAtMinLatencyNanos = 0;
 
-        try {
-            for (int i = 0; i < conf.maxCalibrationIters; ++i) {
-                PreciseDateTime beforeSend = PreciseClock.INSTANCE.now();
-                w.writeLong(beforeSend.toUtcNanos());
-                PreciseDateTime clientTime = new PreciseDateTime(r.readLong());
-                PreciseDateTime afterReceive = PreciseClock.INSTANCE.now();
+        for (int i = 0; i < conf.maxCalibrationIters; ++i) {
+            PreciseDateTime beforeSend = PreciseClock.INSTANCE.now();
+            w.writeLong(beforeSend.toUtcNanos());
+            PreciseDateTime clientTime = new PreciseDateTime(r.readLong());
+            PreciseDateTime afterReceive = PreciseClock.INSTANCE.now();
 
-                long latencyNanos = (afterReceive.toUtcNanos() - beforeSend.toUtcNanos()) / 2;
-                long clockLatenessNanos = clientTime.toUtcNanos() - beforeSend.toUtcNanos() - latencyNanos;
-                // clientTime   == beforeSend + clockLateness + latency
-                // afterReceive == clientTime - clockLateness + latency
-//                Trace.writeLine(
-//                    "[" + ep + "] Iteration " + i + ": clock late by " +
-//                    new TimeSpan(clockLateness) +
-//                    " (beforeSend: " + beforeSend.toString() +
-//                    ", clientTime: " + clientTime.toString() +
-//                    ", afterReceive: " + afterReceive.toString()+ ")");
-
-                int n = i + 1;
-
-                long delta = clockLatenessNanos - mean;
-                mean += delta / n;
-                m2 += delta * (clockLatenessNanos - mean);
-
-                if (n == 1) continue;
-
-                double s = Math.sqrt(1.0 * m2 / (n - 1));
-
-                double td = new TDistributionImpl(n - 1).cumulativeProbability((1 + conf.desiredConfidenceLevel) / 2);
-                double confidenceRange = 2 * s / Math.sqrt(n) * td;
-//                Trace.writeLine("[" + ep + "] confidence range = " + confidenceRange / 1000000 + " ms");
-                if (i >= conf.minCalibrationIters && confidenceRange < conf.desiredConfidenceRangeMs * 1000000) {
-//                    Trace.writeLine("[" + ep + "] Achieved desired confidence range");
-                    break;
-                }
+            long latencyNanos = (afterReceive.toUtcNanos() - beforeSend.toUtcNanos()) / 2;
+            if(latencyNanos < minLatencyNanos) {
+                minLatencyNanos = latencyNanos;
+                latenessAtMinLatencyNanos = clientTime.toUtcNanos() - beforeSend.toUtcNanos() - latencyNanos;
             }
-        } catch (MathException e) {
-            Trace.writeLine("Math exception while calibrating with " + ep, e);
+
+            if (i >= conf.minCalibrationIters && latencyNanos < conf.desiredConfidenceRangeMs * 1000000L) {
+                break;
+            }
         }
 
-        Trace.writeLine("Clock lateness with client " + ep + " (" + uuid + ") is " + new TimeSpan(mean));
-        clientLateness.put(uuid, new TimeSpan(mean));
+        TimeSpan lateness = new TimeSpan(latenessAtMinLatencyNanos);
+        Trace.writeLine("Clock lateness with client " + ep + " (" + uuid + ") is " + lateness);
+        clientLateness.put(uuid, lateness);
     }
 
 

@@ -7,7 +7,6 @@ public class Configuration {
     public int minCalibrationIters;
     public int maxCalibrationIters;
     public double desiredConfidenceRangeMs;
-    public double desiredConfidenceLevel;
     public int maxPendingUncalibrated;
     public int maxPendingCalibrated;
     public int timeWindowSec;
