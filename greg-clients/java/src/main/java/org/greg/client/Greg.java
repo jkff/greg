@@ -8,7 +8,6 @@ import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetEncoder;
-import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -24,21 +23,27 @@ public class Greg {
     private static final UUID OUR_UUID = UUID.randomUUID();
     private static final String hostname;
 
+    private static Thread pushMessagesThread;
+    private static Thread initCalibrationThread;
+
+    private static volatile boolean isSoftShutdownRequested = false;
+    private static volatile boolean isHardShutdownRequested = false;
+
     static {
-        Thread pushMessages = new Thread("GregPushMessages") {
+        pushMessagesThread = new Thread("GregPushMessages") {
             public void run() {
                 pushCurrentMessages();
             }
         };
-        pushMessages.setDaemon(true);
-        pushMessages.start();
-        Thread initCalibration = new Thread("GregInitiateCalibration") {
+        pushMessagesThread.setDaemon(true);
+        pushMessagesThread.start();
+        initCalibrationThread = new Thread("GregInitiateCalibration") {
             public void run() {
                 initiateCalibration();
             }
         };
-        initCalibration.setDaemon(true);
-        initCalibration.start();
+        initCalibrationThread.setDaemon(true);
+        initCalibrationThread.start();
 
         try {
             hostname = InetAddress.getLocalHost().getHostName();
@@ -69,13 +74,50 @@ public class Greg {
         }
     }
 
+    /**
+     * Requests shutdown and awaits until either
+     * 1) remaining message count reaches zero or
+     * 2) timeout elapses.
+     * Use this method to make sure that everything your application had to say
+     * has been sent, before shutting down the application.
+     *
+     * Completion of this method DOES NOT prevent further usage of {@link #log(String)}.
+     *
+     * @param timeoutMs How long to wait before abandoning hope to push all messages
+     * (if this much elapses, all bets are off as to what messages have been pushed)
+     * @return approximate number of message that haven't been pushed
+     * @throws InterruptedException if the thread running this method is interrupted
+     */
+    public static int shutdownAndAwait(long timeoutMs) throws InterruptedException {
+        isSoftShutdownRequested = true;
+
+        long t0 = System.currentTimeMillis();
+        pushMessagesThread.join(timeoutMs);
+        long elapsed = System.currentTimeMillis() - t0;
+        if(elapsed < timeoutMs)
+            initCalibrationThread.join(timeoutMs - elapsed);
+
+        isHardShutdownRequested = true;
+        // Now the two threads should shut down soon.
+        // However we don't care much, as they're daemon threads anyway.
+
+        return records.size();
+    }
+
+    private static boolean shouldTerminate() {
+        return isHardShutdownRequested || (isSoftShutdownRequested && records.isEmpty());
+    }
+
     private static void pushCurrentMessages() {
         while (true) {
+            if (shouldTerminate())
+                break;
+
             while (records.isEmpty()) {
                 try {
                     Thread.sleep(10);
                 } catch (InterruptedException e) {
-                    continue;
+                    return;
                 }
             }
             boolean exhausted = true;
@@ -98,6 +140,8 @@ public class Greg {
                 stream = new BufferedOutputStream(conf.useCompression ? new GZIPOutputStream(bStream) : bStream, 65536);
                 exhausted = writeRecordsBatchTo(stream);
             } catch (Exception e) {
+                if(e instanceof InterruptedException || e instanceof InterruptedIOException)
+                    return;
                 Trace.writeLine("Failed to push messages: " + e);
                 // Ignore: logging is not *that* important and we're not a persistent message queue.
                 // Perhaps better luck during the next iteration.
@@ -112,7 +156,7 @@ public class Greg {
                 try {
                     Thread.sleep(conf.flushPeriodMs);
                 } catch (InterruptedException e) {
-                    continue;
+                    return;
                 }
             }
         }
@@ -188,13 +232,15 @@ public class Greg {
     }
 
     private static void initiateCalibration() {
-        while (true) {
+        while (!shouldTerminate()) {
             Socket client = null;
             try {
                 client = new Socket(conf.server, conf.calibrationPort);
                 client.setTcpNoDelay(true);
                 exchangeTicksOver(client.getInputStream(), client.getOutputStream());
             } catch (Exception e) {
+                if(e instanceof InterruptedIOException || e instanceof InterruptedException)
+                    return;
                 Trace.writeLine("Failed to exchange clock ticks during calibration, ignoring" + e);
             } finally {
                 close(client);
@@ -202,7 +248,7 @@ public class Greg {
             try {
                 Thread.sleep(conf.calibrationPeriodSec * 1000L);
             } catch (InterruptedException e) {
-                continue;
+                return;
             }
         }
     }
